@@ -60,7 +60,6 @@ ARG PYTHON_RELEASE
 #RUN chmod +x /usr/bin/ssocr
 
 # Install curl to allow for healthchecks
-RUN apt-get --no-cache install curl
 RUN apt update && apt install curl ssocr -y
 
 # Copy the python dependencies built and installed in the previous stage
