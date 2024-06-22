@@ -1,3 +1,10 @@
+#FROM ubuntu AS ssocr_builder
+#RUN apt-get update -qq &&\
+#    apt-get install -y git libx11-dev libimlib2-dev
+#RUN git clone https://github.com/auerswal/ssocr.git &&\
+#    cd ssocr &&\
+#    make 
+
 # When changing this, make sure that the python major and minor version matches that provided by alpine's python3
 # package (see https://pkgs.alpinelinux.org/packages), otherwise alpine py3-* packages won't work
 # Due to incorrect PYTHONPATH
@@ -47,6 +54,9 @@ FROM ${BASE_IMAGE}
 ARG TARGETARCH
 ARG TARGETVARIANT
 ARG PYTHON_RELEASE
+
+#COPY --from=ssocr_builder /ssocr/ssocr /usr/bin/ssocr
+#RUN chmod +x /usr/bin/ssocr
 
 # Copy the python dependencies built and installed in the previous stage
 COPY --from=builder /usr/local/lib/python${PYTHON_RELEASE}/site-packages /usr/local/lib/python${PYTHON_RELEASE}/site-packages
