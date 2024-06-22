@@ -13,8 +13,9 @@
 # $> python3
 # >>> import sklearn
 # (No error and it worked!)
-ARG PYTHON_RELEASE=3.11 ALPINE_VERSION=3.18
-ARG BASE_IMAGE=python:${PYTHON_RELEASE}-alpine${ALPINE_VERSION}
+ARG PYTHON_RELEASE=3.11.9 ALPINE_VERSION=3.18
+ARG DEBIAN_VERSION=slim-bookworm
+ARG BASE_IMAGE=python:${PYTHON_RELEASE}-${DEBIAN_VERSION}
 # Image for building dependencies (on architectures that don't provide a ready-made Python wheel)
 FROM ${BASE_IMAGE} as builder
 
@@ -57,6 +58,8 @@ ARG PYTHON_RELEASE
 
 #COPY --from=ssocr_builder /ssocr/ssocr /usr/bin/ssocr
 #RUN chmod +x /usr/bin/ssocr
+
+RUN 
 
 # Copy the python dependencies built and installed in the previous stage
 COPY --from=builder /usr/local/lib/python${PYTHON_RELEASE}/site-packages /usr/local/lib/python${PYTHON_RELEASE}/site-packages
