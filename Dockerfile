@@ -59,7 +59,9 @@ ARG PYTHON_RELEASE
 #COPY --from=ssocr_builder /ssocr/ssocr /usr/bin/ssocr
 #RUN chmod +x /usr/bin/ssocr
 
-RUN 
+# Install curl to allow for healthchecks
+RUN apt-get --no-cache install curl
+RUN apt update && apt install curl ssocr -y
 
 # Copy the python dependencies built and installed in the previous stage
 COPY --from=builder /usr/local/lib/python${PYTHON_RELEASE}/site-packages /usr/local/lib/python${PYTHON_RELEASE}/site-packages
@@ -90,5 +92,3 @@ ENV PYTHONPATH=/usr/lib/python${PYTHON_RELEASE}:/usr/lib/python${PYTHON_RELEASE}
 # Define entrypoint script
 ENTRYPOINT ["./dockerStart.sh"]
 
-# Install curl to allow for healthchecks
-RUN apk --no-cache add curl
