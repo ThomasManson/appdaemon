@@ -13,7 +13,7 @@
 # $> python3
 # >>> import sklearn
 # (No error and it worked!)
-ARG PYTHON_RELEASE=3.11.9 ALPINE_VERSION=3.18
+ARG PYTHON_RELEASE=3.11 ALPINE_VERSION=3.18
 ARG DEBIAN_VERSION=slim-bookworm
 ARG BASE_IMAGE=python:${PYTHON_RELEASE}-${DEBIAN_VERSION}
 # Image for building dependencies (on architectures that don't provide a ready-made Python wheel)
