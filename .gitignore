@@ -54,6 +54,7 @@ coverage.xml
 
 # Sphinx documentation
 docs/_build/
+.docs_build
 
 # PyBuilder
 target/
@@ -76,4 +77,7 @@ venv
 # IDE
 
 .vscode
-.devcontainer
+
+# Docs
+
+.docs_build

@@ -13,11 +13,10 @@
 # $> python3
 # >>> import sklearn
 # (No error and it worked!)
-ARG PYTHON_RELEASE=3.11 ALPINE_VERSION=3.18
-ARG DEBIAN_VERSION=slim-bookworm
-ARG BASE_IMAGE=python:${PYTHON_RELEASE}-${DEBIAN_VERSION}
+ARG PYTHON_RELEASE=3.13 ALPINE_VERSION=3.21
+ARG BASE_IMAGE=python:${PYTHON_RELEASE}-alpine${ALPINE_VERSION}
 # Image for building dependencies (on architectures that don't provide a ready-made Python wheel)
-FROM ${BASE_IMAGE} as builder
+FROM ${BASE_IMAGE} AS builder
 
 # Build arguments populated automatically by docker during build with the target architecture we are building for (eg: 'amd64')
 # Useful to differentiate the build process for each architecture

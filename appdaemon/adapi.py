@@ -1169,14 +1169,16 @@ class ADAPI:
         Examples:
             It should be noted that the register function, should return a string (can be empty),
             and an HTTP OK status response (e.g., `200`. If this is not added as a returned response,
-            the function will generate an error each time it is processed.
+            the function will generate an error each time it is processed. If the POST request
+            contains JSON data, the decoded data will be passed as the argument to the callback.
+            Otherwise the callback argument will contain the query string. A `request` kwarg contains
+            the http request object.
 
             >>> self.register_endpoint(self.my_callback)
             >>> self.register_endpoint(self.alexa_cb, "alexa")
 
-            >>> async def alexa_cb(self, request, kwargs):
-            >>>     data = await request.json()
-            >>>     self.log(data)
+            >>> async def alexa_cb(self, json_obj, kwargs):
+            >>>     self.log(json_obj)
             >>>     response = {"message": "Hello World"}
             >>>     return response, 200
 
@@ -1437,7 +1439,7 @@ class ADAPI:
             return await self.get_entity_api(namespace, entity_id).listen_state(callback, **kwargs)
 
     @utils.sync_wrapper
-    async def cancel_listen_state(self, handle: str) -> bool:
+    async def cancel_listen_state(self, handle: str, silent=False) -> bool:
         """Cancels a ``listen_state()`` callback.
 
         This will mean that the App will no longer be notified for the specific
@@ -1446,6 +1448,7 @@ class ADAPI:
 
         Args:
             handle: The handle returned when the ``listen_state()`` call was made.
+            silent (bool, optional): If ``True``, no warning will be issued if the handle is not found.
 
         Returns:
             Boolean.
@@ -1453,9 +1456,13 @@ class ADAPI:
         Examples:
             >>> self.cancel_listen_state(self.office_light_handle)
 
+            Don't display a warning if the handle is not found.
+
+            >>> self.cancel_listen_state(self.dummy_handle, silent=True)
+
         """
         self.logger.debug("Canceling listen_state for %s", self.name)
-        return await self.AD.state.cancel_state_callback(handle, self.name)
+        return await self.AD.state.cancel_state_callback(handle, self.name, silent)
 
     @utils.sync_wrapper
     async def info_listen_state(self, handle: str) -> dict:
@@ -1745,17 +1752,33 @@ class ADAPI:
                 or the default namespace. See the section on `namespaces <APPGUIDE.html#namespaces>`__
                 for a detailed description. In most cases, it is safe to ignore this parameter.
             return_result(str, option): If `return_result` is provided and set to `True` AD will attempt
-                to wait for the result, and return it after execution
+                to wait for the result, and return it after execution. In the case of Home Assistant calls that do not
+                return values this may seem pointless, but it does force the call to be synchronous with respect to Home Assistant
+                whcih can in turn highlight slow performing services if they timeout or trigger thread warnings.
             callback: The non-async callback to be executed when complete.
+            hass_result (False, Home Assistant Specific): Mark the service call to Home Assistant as returnng a
+                value. If set to ``True``, the call to Home Assistant will specifically request a return result.
+                If this flag is set for a service that does not return a result, Home Assistant will respond with an error,
+                which AppDaemon will log. If this flag is NOT set for a service that does returns a result,
+                Home Assistant will respond with an error, which AppDaemon will log. Note: if you specify ``hass_result``
+                you must also set ``return_result`` or the result from HomeAssistant will not be propagated to your app. See `Some Notes on Service Calls <APPGUIDE.html#some-notes-on-service-calls>`__
+            hass_timeout (Home Assistant Specific): time in seconds to wait for Home Assistant's response for this specific service call. If not specified
+                defaults to the value of the ``q_timeout`` parameter in the HASS plugin configuration, which itself defaults to 30 seconds. See `Some Notes on Service Calls <APPGUIDE.html#some-notes-on-service-calls>`__
+            suppress_log_messages (Home Assistant Specific, False): if set to ``True`` Appdaemon will suppress logging of warnings for service calls to Home Assistant, specifically timeouts and non OK statuses. Use this flag and set it to ``True``
+                to supress these log messages if you are performing your own error checking as described `here <APPGUIDE.html#some-notes-on-service-calls>`__
+
+
 
         Returns:
-            Result of the `call_service` function if any
+            Result of the `call_service` function if any, see `service call notes <APPGUIDE.html#some-notes-on-service-calls>`__ for more details.
+
 
         Examples:
             HASS
 
             >>> self.call_service("light/turn_on", entity_id = "light.office_lamp", color_name = "red")
             >>> self.call_service("notify/notify", title = "Hello", message = "Hello World")
+            >>> self.call_service("calendar/get_events", entity_id="calendar.home", start_date_time="2024-08-25 00:00:00", end_date_time="2024-08-27 00:00:00", return_result=True, hass_result=True, hass_timeout=10)
 
             MQTT
 
@@ -2092,6 +2115,8 @@ class ADAPI:
                     b. ``sunrise|sunset [+|- HH:MM:SS[.ss]]`` - time of the next sunrise or sunset
                     with an optional positive or negative offset in Hours Minutes, Seconds and Microseconds.
 
+                    c. ``N deg rising|setting`` - time the sun will be at N degrees of elevation while either rising or setting
+
                 If the ``HH:MM:SS.ss`` format is used, the resulting datetime object will have
                 today's date.
             name (str, optional): Name of the calling app or module. It is used only for logging purposes.
@@ -2186,7 +2211,7 @@ class ADAPI:
         return now.astimezone(self.AD.tz)
 
     @utils.sync_wrapper
-    async def get_now_ts(self) -> int:
+    async def get_now_ts(self) -> float:
         """Returns the current Local Timestamp.
 
         Examples:
@@ -3103,8 +3128,6 @@ class ADAPI:
 
         def callback_inner(f):
             try:
-                # @todo : use our own callback type instead of borrowing
-                # from scheduler
                 rargs = {}
                 rargs["result"] = f.result()
                 sched_data["kwargs"] = rargs
@@ -3154,8 +3177,6 @@ class ADAPI:
 
         def callback_inner(f):
             try:
-                # @todo : use our own callback type instead of borrowing
-                # from scheduler
                 kwargs["result"] = f.result()
                 sched_data["kwargs"] = kwargs
                 self.create_task(self.AD.threading.dispatch_worker(self.name, sched_data))
@@ -3173,7 +3194,7 @@ class ADAPI:
         return f
 
     @staticmethod
-    async def sleep(delay: int, result=None) -> None:
+    async def sleep(delay: float, result=None) -> None:
         """Pause execution for a certain time span
         (not available in sync apps)
 
