@@ -62,9 +62,6 @@ ARG PYTHON_RELEASE
 COPY --from=ssocr_build /usr/local/bin/ssocr /usr/local/bin/ssocr
 RUN chmod +x /usr/local/bin/ssocr
 
-# Install curl to allow for healthchecks
-RUN apt update && apt install curl -y
-
 # Copy the python dependencies built and installed in the previous stage
 COPY --from=builder /usr/local/lib/python${PYTHON_RELEASE}/site-packages /usr/local/lib/python${PYTHON_RELEASE}/site-packages
 
