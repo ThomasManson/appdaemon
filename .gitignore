@@ -81,3 +81,5 @@ venv
 # Docs
 
 .docs_build
+
+.devcontainer
