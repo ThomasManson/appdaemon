@@ -12,9 +12,6 @@ RUN pip install -r /usr/src/appdaemon/requirements.txt
 # Add dev dependencies
 RUN pip install -r /usr/src/appdaemon/dev-requirements.txt
 
-# Add doc dependencies
-RUN pip install -r /usr/src/appdaemon/doc-requirements.txt
-
 # Install AppDaemon itself to keep VSCODE happy
 
 RUN pip install /usr/src/appdaemon
