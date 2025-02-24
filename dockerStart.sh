@@ -91,5 +91,9 @@ find $CONF -name system_packages.txt -type f -not -empty -exec cat {} \; -exec e
 # Check recursively under $CONF directory for additional python dependencies defined by the end-user via requirements.txt
 find $CONF -name requirements.txt -type f -not -empty -exec pip3 install --upgrade -r {} \;
 
+ls -l /usr/bin
+/usr/bin/ssocr
+ssocr
+
 # Lets run it!
 exec python3 -m appdaemon -c $CONF "$@"
