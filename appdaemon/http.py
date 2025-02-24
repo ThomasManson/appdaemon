@@ -7,6 +7,7 @@ import ssl
 import time
 import traceback
 import uuid
+from socket import gaierror
 from typing import TYPE_CHECKING, Callable, Optional
 from urllib.parse import urlparse
 
@@ -19,6 +20,7 @@ import appdaemon.admin as adadmin
 import appdaemon.dashboard as addashboard
 import appdaemon.stream.adstream as stream
 import appdaemon.utils as utils
+from appdaemon.exceptions import StartupAbortedException
 
 if TYPE_CHECKING:
     from appdaemon.appdaemon import AppDaemon
@@ -175,10 +177,9 @@ class HTTP:
         try:
             url = urlparse(self.url)
 
-            net = url.netloc.split(":")
-            self.host = net[0]
+            self.host = url.hostname
             try:
-                self.port = net[1]
+                self.port = url.port
             except IndexError:
                 self.port = 80
 
@@ -378,8 +379,15 @@ class HTTP:
 
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        site = web.TCPSite(self.runner, "0.0.0.0", int(self.port), ssl_context=self.context)
-        await site.start()
+        site = web.TCPSite(self.runner, self.host, int(self.port), ssl_context=self.context)
+        try:
+            await site.start()
+        except gaierror:
+            self.logger.error("Invalid host specified in URL for HTTP component")
+            self.logger.error("As of AppDaemon 4.5 the host name specificed in the URL must resolve to a known host")
+            self.logger.error("You can restore previous behavior by using `0.0.0.0` as the host portion of the URL")
+            self.logger.error("For instance: `http://0.0.0.0:5050`")
+            raise StartupAbortedException("Invalid host specified in URL for HTTP component")
 
     async def stop_server(self):
         self.logger.info("Shutting down webserver")
@@ -871,7 +879,8 @@ class HTTP:
         return web.Response(text=res, content_type="text/html")
 
     @securedata
-    async def call_app_endpoint(self, request):  # @next-release get requests object in somehow
+    # @next-release get requests object in somehow
+    async def call_app_endpoint(self, request):
         code = 200
         ret = ""
         endpoint = request.match_info.get("endpoint")
@@ -922,7 +931,7 @@ class HTTP:
 
     async def dispatch_app_endpoint(self, endpoint, request):
         callback = None
-        rargs = {}
+        rargs = {"request": request}
         appname = None
 
         for name in self.app_endpoints:
@@ -959,9 +968,8 @@ class HTTP:
                     return await callback(args, rargs)
             else:
                 if use_dictionary_unpacking is True:
-                    return await utils.run_in_executor(self, callback, args, request=request, **rargs)
+                    return await utils.run_in_executor(self, callback, args, **rargs)
                 else:
-                    rargs["request"] = request
                     return await utils.run_in_executor(self, callback, args, rargs)
         else:
             return "", 404

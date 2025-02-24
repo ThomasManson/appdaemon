@@ -166,13 +166,13 @@ Note: make sure first to create a directory to contain all AppDaemon configurati
 
 .. code:: console
 
-    $ appdaemon -c <patch_to_config_folder>
+    $ appdaemon -c <path_to_config_folder>
 
 You should see something like the following:
 
 .. code:: console
 
-    $ appdaemon -c <patch_to_config_folder>
+    $ appdaemon -c <path_to_config_folder>
     2016-08-22 10:08:16,575 INFO Got initial state
     2016-08-22 10:08:16,576 INFO Loading Module: /home/homeassistant/conf/apps/hello.py
     2016-08-22 10:08:16,578 INFO Loading Object hello_world using class HelloWorld from module hello
@@ -205,7 +205,7 @@ The following CLI arguments are available:
                             global debug level
     -m MODULEDEBUG MODULEDEBUG, --moduledebug MODULEDEBUG MODULEDEBUG
     -v, --version           show program's version number and exit
-    --toml                  use toml file format for configuration files
+    --write_toml            use toml file format for writing new configuration files when creating apps
 
 A brief description of them follows:
 
@@ -217,7 +217,7 @@ A brief description of them follows:
 
     If no file is found in either location, AppDaemon will raise an exception. In addition, AppDaemon expects to find a dir named ``apps`` immediately subordinate to the config directory.
 
-``-C`` name of the configuration file (default: ``appdaemon.yaml`` or ``appdaemon.toml`` depending on the value of the ``--toml`` flag)
+``-C`` name of the configuration file (default: ``appdaemon.yaml`` or ``appdaemon.toml``)
 
 .. TODO: document -d in appdaemon help text
 

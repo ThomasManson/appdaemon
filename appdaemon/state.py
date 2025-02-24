@@ -63,8 +63,6 @@ class State:
 
         await self.AD.events.process_event("admin", data)
 
-        # @todo need to update and reload the admin page to show the new namespace in real-time
-
         return nspath_file
 
     async def namespace_exists(self, namespace):
@@ -90,8 +88,6 @@ class State:
             }
 
             await self.AD.events.process_event("admin", data)
-
-            # @todo need to update and reload the admin page to show the removed namespace in real-time
 
         elif namespace in self.state:
             self.logger.warning("Cannot delete namespace %s, as not an app defined namespace", namespace)
@@ -293,7 +289,7 @@ class State:
         else:
             return None
 
-    async def cancel_state_callback(self, handle, name):
+    async def cancel_state_callback(self, handle, name, silent=False):
         executed = False
         async with self.AD.callbacks.callbacks_lock:
             if name in self.AD.callbacks.callbacks and handle in self.AD.callbacks.callbacks[name]:
@@ -304,7 +300,7 @@ class State:
             if name in self.AD.callbacks.callbacks and self.AD.callbacks.callbacks[name] == {}:
                 del self.AD.callbacks.callbacks[name]
 
-        if not executed:
+        if not executed and not silent:
             self.logger.warning(
                 "Invalid callback handle '{}' in cancel_state_callback() from app {}".format(handle, name)
             )
@@ -510,7 +506,8 @@ class State:
     async def get_state(self, name, namespace, entity_id=None, attribute=None, default=None, copy=True):
         self.logger.debug("get_state: %s.%s %s %s", entity_id, attribute, default, copy)
 
-        maybe_copy = lambda data: deepcopy(data) if copy else data  # noqa: E731
+        def maybe_copy(data):
+            return deepcopy(data) if copy else data  # noqa: E731
 
         if entity_id is not None and "." in entity_id:
             if not await self.entity_exists(namespace, entity_id):

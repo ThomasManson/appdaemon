@@ -9,11 +9,10 @@ Appdaemon Configuration File Format
 ===================================
 
 The AppDaemon configuration file is usually a ``YAML`` file, however from appdaemon 4.3.0 and onwards, appdaemon's configuration file
-as well as the app configuration files can be spedicied in ``TOML`` rather than YAML. This behavior
-is global for all files and is turned on and off by the ``--toml`` flag when appdaemon is invoked. This behavior
-enables the user to easily switch between YAML and TOML files, although all config files muct be converted at the same time when moving from YAML to TOML.
+as well as the app configuration files can be specified in ``TOML`` rather than YAML. AppDaemon will now work transparently with either yaml or toml files,
+allowing the user to mix and match and convert from one format to another over time. In the event of a conflict, the yaml file will take precedence.
 YAML and TOML configuration files are identical in function and capabilities, it is a matter of personal preference which format is used. At this time,
-TOML configuration is not available for HADashboard.
+TOML configuration is not available for HADashboard. Note that AppDaemon expects any secrets files to have the same file extension as the configuration file that references those secrets.
 
 A useful online resource for converting from YAML to TOML and back can be found at `transform tools <https://transform.tools/yaml-to-toml>`_.
 
@@ -67,7 +66,7 @@ The same configuration in a TOML file would be called ``appdaemon.toml`` and wou
   ha_url = "<home_assistant_base_url>"
   token = "<some_long_lived_access_token>"
 
-Both YAML and TROML files work in similar ways to express atomic values, lists and dictionaries, from this point on, some examples will be given in both formats, but the end-user
+Both YAML and TOML files work in similar ways to express atomic values, lists and dictionaries, from this point on, some examples will be given in both formats, but the end-user
 is encouraged to learn the ins and outs of both formats to help in converting configurations from one format to another.
 
 Plugins
@@ -463,7 +462,7 @@ AppDaemon supports the use of `secrets` in the configuration file, to allow sepa
 By default AppDaemon looks for a file called ``secrets.yaml`` or ``secrets.toml`` in the configuration directory.
 You can configure AppDaemon to load a different secrets file by defining its path by defining a top-level ``secrets`` configuration.
 
-The file should be a simple list of all the secrets. The secrets can be later referred to using the ``!secret`` directive in the configuration file, this works for both YAML and TOML.
+The file should be a simple list of all the secrets. The secrets can be later referred to using the ``!secret`` directive in the configuration file, this works for both YAML and TOML, but AppDaemon expects the secrets file to have the same type as the file that references it.
 
 An example ``secrets.yaml`` might look like this:
 
@@ -520,8 +519,12 @@ To configure the HASS plugin, in addition to the required parameters above, you 
    on. If not specified, the RESTFul API will be turned off.
 -  ``app_init_delay`` (optional) - If specified, when AppDaemon connects to HASS each time, it will wait for this number of seconds before initializing apps and listening for events. This is useful for HASS instances that have subsystems that take time to initialize (e.g., zwave).
 -  ``retry_secs`` (optional) - If specified, AD will wait for this many seconds in between retries to connect to HASS (default 5 seconds)
-- appdaemon_startup_conditions - see `HASS Plugin Startup Conditions <#hass-plugin-startup-conditions>`__
-- plugin_startup_conditions - see `HASS Plugin Startup Conditions <#hass-plugin-startup-conditions>`__
+-  ``appdaemon_startup_conditions`` - see `HASS Plugin Startup Conditions <#hass-plugin-startup-conditions>`__
+-  ``plugin_startup_conditions`` - see `HASS Plugin Startup Conditions <#hass-plugin-startup-conditions>`__
+-  ``q_timeout`` (optional, 30 seconds) - amount of time to wait for a response from Home Assistant before returning an error
+-  ``return_result`` (optional, false) - if set to true, all service calls to Home Assistant will wait for a response. Whether or not this returns data,
+   it can also provide error checking, and accurate timing for how long service calls take. Will be overridden by the ``return_result`` argument in ``call_service()``
+-  ``suppress_log_messages`` - (optional, false) - if set to true, all ``call_service()`` related log messages will be suppressed by default. Will be overridden by the ``suppress_log_messages`` argument in ``call_service()``
 
 For example:
 

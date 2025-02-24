@@ -28,6 +28,7 @@ import tomli_w
 import yaml
 
 from appdaemon.version import __version__  # noqa: F401
+from appdaemon.version import __version_comments__  # noqa: F401
 
 # Comment
 
@@ -322,18 +323,23 @@ async def run_in_executor(self, fn, *args, **kwargs) -> Any:
     return response
 
 
-def run_coroutine_threadsafe(self, coro):
+def run_coroutine_threadsafe(self, coro, timeout=0):
     result = None
+    if timeout == 0:
+        t = self.AD.internal_function_timeout
+    else:
+        t = timeout
+
     if self.AD.loop.is_running():
         future = asyncio.run_coroutine_threadsafe(coro, self.AD.loop)
         try:
-            result = future.result(self.AD.internal_function_timeout)
+            result = future.result(t)
         except (asyncio.TimeoutError, concurrent.futures.TimeoutError):
             if hasattr(self, "logger"):
                 self.logger.warning(
                     "Coroutine (%s) took too long (%s seconds), cancelling the task...",
                     coro,
-                    self.AD.internal_function_timeout,
+                    t,
                 )
             else:
                 print("Coroutine ({}) took too long, cancelling the task...".format(coro))
@@ -439,6 +445,11 @@ def process_arg(self, arg, args, **kwargs):
 
 def find_owner(filename):
     return pwd.getpwuid(os.stat(filename).st_uid).pw_name
+
+
+def is_valid_root_path(root: str) -> bool:
+    root = os.path.basename(root)
+    return root != "__pycache__" and not root.startswith(".")
 
 
 def check_path(type, logger, inpath, pathtype="directory", permissions=None):  # noqa: C901
