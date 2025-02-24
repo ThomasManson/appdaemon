@@ -1,11 +1,3 @@
-FROM ubuntu AS ssocr_build
-RUN apt-get update -qq &&\
-    apt-get install -y git libx11-dev libimlib2-dev
-RUN git clone https://github.com/auerswal/ssocr.git &&\
-    cd ssocr &&\
-    make &&\
-    mv ./ssocr /usr/local/bin/ssocr
-
 # When changing this, make sure that the python major and minor version matches that provided by alpine's python3
 # package (see https://pkgs.alpinelinux.org/packages), otherwise alpine py3-* packages won't work
 # Due to incorrect PYTHONPATH
@@ -15,8 +7,8 @@ RUN git clone https://github.com/auerswal/ssocr.git &&\
 # >>> import sklearn
 # (No error and it worked!)
 ARG PYTHON_RELEASE=3.13 ALPINE_VERSION=3.21
-ARG BASE_IMAGE1=python:${PYTHON_RELEASE}-alpine${ALPINE_VERSION}
-ARG BASE_IMAGE=python:3.13-alpine3.21
+ARG BASE_IMAGE=python:${PYTHON_RELEASE}-alpine${ALPINE_VERSION}
+ARG BASE_IMAGE1=python:3.13-alpine3.21
 # Image for building dependencies (on architectures that don't provide a ready-made Python wheel)
 FROM ${BASE_IMAGE} AS builder
 
@@ -48,6 +40,16 @@ COPY ./requirements.txt /usr/src/app/
 # (specify the architecture in the cache id, otherwise the pip cache of different architectures will conflict)
 RUN --mount=type=cache,id=pip-${TARGETARCH}-${TARGETVARIANT},sharing=locked,target=/root/.cache/pip \
     pip install -r /usr/src/app/requirements.txt
+
+#########################################
+# Build ssocr
+FROM ubuntu AS ssocr_build
+RUN apt-get update -qq &&\
+    apt-get install -y git libx11-dev libimlib2-dev
+RUN git clone https://github.com/auerswal/ssocr.git &&\
+    cd ssocr &&\
+    make &&\
+    mv ./ssocr /usr/local/bin/ssocr
 
 ###################################
 # Runtime image
