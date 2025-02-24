@@ -10,6 +10,7 @@ on:
     tags: ["*"]
   pull_request:
     branches: ["dev"]
+  workflow_dispatch:
 
 # Cancel a currently running workflow from the same PR, branch or tag when a new workflow is triggered:
 # Taken from https://stackoverflow.com/a/72408109
