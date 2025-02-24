@@ -60,7 +60,7 @@ ARG TARGETVARIANT
 ARG PYTHON_RELEASE
 
 COPY --from=ssocr_build /usr/local/bin/ssocr /usr/bin/ssocr
-RUN chmod +x /usr/bin/ssocr
+RUN chmod 755 /usr/bin/ssocr
 
 # Copy the python dependencies built and installed in the previous stage
 COPY --from=builder /usr/local/lib/python${PYTHON_RELEASE}/site-packages /usr/local/lib/python${PYTHON_RELEASE}/site-packages
