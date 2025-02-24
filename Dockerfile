@@ -7,8 +7,8 @@
 # >>> import sklearn
 # (No error and it worked!)
 ARG PYTHON_RELEASE=3.13 ALPINE_VERSION=3.21
-ARG BASE_IMAGE=python:${PYTHON_RELEASE}-alpine${ALPINE_VERSION}
-ARG BASE_IMAGE1=python:3.13-alpine3.21
+ARG BASE_IMAGE1=python:${PYTHON_RELEASE}-alpine${ALPINE_VERSION}
+ARG BASE_IMAGE=python:3.13-bookworm
 # Image for building dependencies (on architectures that don't provide a ready-made Python wheel)
 FROM ${BASE_IMAGE} AS builder
 
@@ -43,9 +43,11 @@ RUN --mount=type=cache,id=pip-${TARGETARCH}-${TARGETVARIANT},sharing=locked,targ
 
 #########################################
 # Build ssocr
-FROM ubuntu AS ssocr_build
+
+FROM ${BASE_IMAGE} AS ssocr_build
+
 RUN apt-get update -qq &&\
-    apt-get install -y git libx11-dev libimlib2-dev
+    apt install -y git libx11-dev libimlib2-dev
 RUN git clone https://github.com/auerswal/ssocr.git &&\
     cd ssocr &&\
     make &&\
