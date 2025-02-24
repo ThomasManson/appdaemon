@@ -61,6 +61,8 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG PYTHON_RELEASE
 
+RUN apt update && apt install ssocr -y
+
 COPY --from=ssocr_build /usr/local/bin/ssocr /usr/bin/ssocr
 RUN chmod 755 /usr/bin/ssocr
 
