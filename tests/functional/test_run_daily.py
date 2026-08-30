@@ -57,7 +57,12 @@ class TestRunDaily:
                         match entry:
                             case {"type": "next_rising", "repeat": True, "timestamp": timestamp, "offset": offset}:
                                 assert offset == timedelta(hours=-1)
-                                assert timestamp.astimezone(ad.tz).date() == (datetime.now(ad.tz) + timedelta(days=1)).date()
+                                scheduled = timestamp.astimezone(ad.tz)
+                                now = datetime.now(ad.tz)
+                                # Fires today if today's sunrise-1h has not passed yet,
+                                # otherwise tomorrow -- either way it is the next
+                                # occurrence within the coming 24 hours.
+                                assert now < scheduled <= now + timedelta(days=1)
                                 break
                     else:
                         assert False, "No matching entry found"
