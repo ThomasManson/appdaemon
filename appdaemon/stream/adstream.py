@@ -1,18 +1,21 @@
-import traceback
-import bcrypt
-import uuid
-import threading
 import asyncio
+import threading
+import traceback
+import uuid
 
-from appdaemon.appdaemon import AppDaemon
+import bcrypt
+
 import appdaemon.utils as utils
-from appdaemon.stream.socketio_handler import SocketIOHandler
-from appdaemon.stream.ws_handler import WSHandler
-from appdaemon.stream.sockjs_handler import SockJSHandler
+from appdaemon.appdaemon import AppDaemon
 from appdaemon.exceptions import RequestHandlerException
+from appdaemon.stream.socketio_handler import SocketIOHandler
+from appdaemon.stream.sockjs_handler import SockJSHandler
+from appdaemon.stream.ws_handler import WSHandler
 
 
 class ADStream:
+    name: str = "_adstream"
+
     def __init__(self, ad: AppDaemon, app, transport):
         self.AD = ad
         self.logger = ad.logging.get_child("_stream")
@@ -51,7 +54,7 @@ class ADStream:
         rh = RequestHandler(self.AD, self, handle, request)
         with self.handlers_lock:
             self.handlers[handle] = rh
-        await rh.stream.run()
+        return await rh.stream.run()
 
     async def on_disconnect(self, handle):
         with self.handlers_lock:
@@ -79,6 +82,8 @@ class ADStream:
 ## directly. Only Create public methods here if you wish to make them
 ## stream commands.
 class RequestHandler:
+    name: str = "_request_handler"
+
     def __init__(self, ad: AppDaemon, adstream, handle, request):
         self.AD = ad
         self.handle = handle
@@ -98,9 +103,7 @@ class RequestHandler:
 
         # Create a stream
         #
-        self.stream = self.adstream.stream_handler.makeStream(
-            self.AD, request, on_message=self._on_message, on_disconnect=self._on_disconnect
-        )
+        self.stream = self.adstream.stream_handler.makeStream(self.AD, request, on_message=self._on_message, on_disconnect=self._on_disconnect)
         #
 
     async def _on_message(self, data):
@@ -331,7 +334,15 @@ class RequestHandler:
 
             service_data = data["data"]
 
-        return await self.AD.services.call_service(data["namespace"], domain, service, service_data)
+            if "__name" in service_data:
+                del service_data["__name"]
+
+        return await self.AD.services.call_service(
+            namespace=data["namespace"],
+            domain=domain,
+            service=service,
+            data=service_data
+        )  # fmt: skip
 
     async def get_state(self, data, request_id):
         if not self.authed:

@@ -6,10 +6,8 @@
 # $> python3
 # >>> import sklearn
 # (No error and it worked!)
-ARG PYTHON_RELEASE=3.13 ALPINE_VERSION=3.21
-ARG BASE_IMAGE1=python:${PYTHON_RELEASE}-alpine${ALPINE_VERSION}
-ARG BASE_IMAGE=python:3.13-slim-bookworm
-
+ARG PYTHON_RELEASE=3.12 ALPINE_VERSION=3.22
+ARG BASE_IMAGE=python:${PYTHON_RELEASE}-alpine${ALPINE_VERSION}
 # Image for building dependencies (on architectures that don't provide a ready-made Python wheel)
 FROM ${BASE_IMAGE} AS builder
 
@@ -18,6 +16,20 @@ FROM ${BASE_IMAGE} AS builder
 # https://docs.docker.com/engine/reference/builder/#automatic-platform-args-in-the-global-scope
 ARG TARGETARCH
 ARG TARGETVARIANT
+ARG PYTHON_RELEASE
+
+ENV UV_LOCKED=true
+ENV UV_COMPILE_BYTECODE=true
+ENV UV_LINK_MODE=copy
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
+ENV UV_SYSTEM_PYTHON=true
+ENV UV_NO_MANAGED_PYTHON=true
+ENV PYTHONPATH="/usr/lib/python${PYTHON_RELEASE}/site-packages"
+
+RUN --mount=type=cache,id=apk-${TARGETARCH}-${TARGETVARIANT},sharing=locked,target=/var/cache/apk/ \
+    apk add uv
+
+ENV PATH="/root/.local/bin/:$PATH"
 
 # A workaround for compiling the `orsjson` package with rust: see https://github.com/rust-lang/cargo/issues/6513#issuecomment-1440029221
 ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
@@ -28,30 +40,33 @@ ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 # Install system dependencies, saving the apk cache with docker mount: https://docs.docker.com/build/cache/#keep-layers-small
 # Specify the architecture in the cache id, otherwise the apk cache of different architectures will conflict
 RUN --mount=type=cache,id=apk-${TARGETARCH}-${TARGETVARIANT},sharing=locked,target=/var/cache/apk/ \
-    if [ "$TARGETARCH" = "arm" ]; then\
-        apk add git rust cargo &&\
-        apk add build-base cython;\
-    fi
-
-# Copy requirements file of AppDaemon
-COPY ./requirements.txt /usr/src/app/
+    if [ "$TARGETARCH" = "arm" ]; then apk add git build-base cython rust cargo; fi
 
 # Install the Python dependencies of AppDaemon
 # Save the pip cache with docker mount: https://docs.docker.com/build/cache/#keep-layers-small
 # (specify the architecture in the cache id, otherwise the pip cache of different architectures will conflict)
-RUN --mount=type=cache,id=pip-${TARGETARCH}-${TARGETVARIANT},sharing=locked,target=/root/.cache/pip \
-    pip install -r /usr/src/app/requirements.txt
+RUN --mount=type=cache,id=uv-${TARGETARCH}-${TARGETVARIANT},sharing=locked,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --inexact --no-install-project --no-dev --no-editable
+
+RUN --mount=type=cache,id=uv-${TARGETARCH}-${TARGETVARIANT},sharing=locked,target=/root/.cache/uv \
+    --mount=type=bind,source=./dist,target=/dist \
+    uv pip install /dist/*.whl
+
+ENTRYPOINT [ "/bin/ash" ]
 
 #########################################
 # Build ssocr
+# Built against the same Alpine base as the runtime image so the resulting
+# binary links against matching libX11/imlib2 shared libraries.
+FROM ${BASE_IMAGE} AS ssocr_build
 
-FROM python:3.13-bookworm AS ssocr_build
-
-RUN apt-get update -qq &&\
-    apt install -y git libx11-dev libimlib2-dev
-RUN git clone https://github.com/auerswal/ssocr.git &&\
-    cd ssocr &&\
-    make &&\
+RUN --mount=type=cache,id=apk-ssocr,sharing=locked,target=/var/cache/apk/ \
+    apk add git build-base libx11-dev imlib2-dev
+RUN git clone --depth 1 https://github.com/auerswal/ssocr.git && \
+    cd ssocr && \
+    make && \
     mv ./ssocr /usr/local/bin/ssocr
 
 ###################################
@@ -62,26 +77,25 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 ARG PYTHON_RELEASE
 
-RUN apt update && apt install ssocr -y
+# Install curl to allow for healthchecks
+RUN apk --no-cache add curl
 
+# ssocr runtime dependencies, plus the binary built in the ssocr_build stage
+RUN apk --no-cache add libx11 imlib2
 COPY --from=ssocr_build /usr/local/bin/ssocr /usr/bin/ssocr
 RUN chmod 755 /usr/bin/ssocr
 
-# Copy the python dependencies built and installed in the previous stage
-COPY --from=builder /usr/local/lib/python${PYTHON_RELEASE}/site-packages /usr/local/lib/python${PYTHON_RELEASE}/site-packages
-
-WORKDIR /usr/src/app
-
-# Install Appdaemon from the Python package built in the project `dist/` folder
-RUN --mount=type=cache,id=pip-${TARGETARCH}-${TARGETVARIANT},sharing=locked,target=/root/.cache/pip,from=builder \
-    # Mount the project directory containing the built Python package, so it is available for pip install inside the container
-    --mount=type=bind,source=./dist/,target=/usr/src/app/ \
-    # Install the package
-    pip install *.whl
-
 # Copy sample configuration directory and entrypoint script
-COPY ./conf ./conf
-COPY ./dockerStart.sh .
+COPY ./conf /opt/conf
+COPY ./scripts/start.sh /start.sh
+
+# Copy the python dependencies built and installed in the previous stage
+COPY --from=builder /usr/local /usr/local
+
+ENV UV_PROJECT_ENVIRONMENT=/usr/local
+ENV UV_SYSTEM_PYTHON=true
+ENV UV_NO_MANAGED_PYTHON=true
+ENV PYTHONPATH="/usr/lib/python${PYTHON_RELEASE}/site-packages"
 
 # API Port
 EXPOSE 5050
@@ -90,9 +104,8 @@ EXPOSE 5050
 VOLUME /conf
 VOLUME /certs
 
-# Add paths used by alpine python packages to python search path
-ENV PYTHONPATH=/usr/lib/python${PYTHON_RELEASE}:/usr/lib/python${PYTHON_RELEASE}/site-packages
+WORKDIR /conf
+ENTRYPOINT [ "/start.sh" ]
 
-# Define entrypoint script
-ENTRYPOINT ["./dockerStart.sh"]
-
+RUN --mount=type=cache,id=apk-${TARGETARCH}-${TARGETVARIANT},sharing=locked,target=/var/cache/apk/ \
+    apk add uv

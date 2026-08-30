@@ -1,24 +1,357 @@
 # Change Log
 
-## 4.5.0
+## 4.5.14
 
 **Features**
 
+- Transitioned project tooling to use [uv](https://docs.astral.sh/uv/)
+    - Dependency management with ``uv.lock`` instead of requirements.txt files.
+    - Dockerfile uses uv to install dependencies and run AppDaemon
+    - CI pipelines using GitHub Actions now use [`astral-sh/setup-uv`](https://github.com/astral-sh/setup-uv)
+    - VSCode tasks use uv to launch things.
+- Reworked CI pipeline
+    - `Build Documentation` runs directly whenever only docs files are changed.
+    - `Python CI` runs against all PRs and whenever python files get changed. Upon success completion:
+        - `Build Documentation` runs for tagged version commits, as well as `dev` branch
+        - `Build and Deploy Docker Image` runs for tagged version commits, as well as `dev` branch
+        - `PyPI Upload` runs for tagged version commits
+            - Runs the `functional` test group before uploading
+    - Stale issues no longer close after 15 days
+- Broke up the doc page on the AppDaemon internals into multiple pages and expanded content.
+- Added support for Python 3.14
+
+**Fixes**
+
+- Remove outdated references to `app_init_delay`
+- Reworked how the `pin_app` and `pin_thread` settings work their way through the internals, and added corresponding tests.
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.13 (2026-01-17)
+
+**Features**
+
+- Added some basic test for persistent namespaces
+- Add request context logging for failed HASS calls - contributed by [ekutner](https://github.com/ekutner)
+- Reload modified apps on SIGUSR2 - contributed by [chatziko](https://github.com/chatziko)
+- Using urlib to create endpoints from URLs - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Added {py:meth}`~appdaemon.plugins.hass.hassapi.Hass.process_conversation` and {py:meth}`~appdaemon.plugins.hass.hassapi.Hass.reload_conversation` to the {ref}`Hass API <hass-api-usage>`.
+- Added special value `immediate` to {py:meth}`~appdaemon.adapi.ADAPI.run_every` semantics for the `start` kwarg. See the method docs for more information.
+
+**Fixes**
+
+- Fix for sunrise and sunset with offsets - contributed by [ekutner](https://github.com/ekutner)
+- Fix for random MQTT disconnects  - contributed by [Xsandor](https://github.com/Xsandor)
+- Fix reading of httppassword and ha_key - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix for connecting to Home Assistant with https
+- Fix for persistent namespaces in Python 3.12
+- Better error handling for receiving huge websocket messages in the Hass plugin
+- Fix for matching in {py:meth}`~appdaemon.plugins.hass.hassapi.Hass.get_history` - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix {py:meth}`~appdaemon.state.State.set_state` error handling - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix production mode and scheduler race  - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix scheduler crash - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix startup when no plugins are configured - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix entity persistence - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix for timezone handling in `run_at_sunrise()/sunset()` - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix for `toal_threads == 0` - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix for multiple timezone issues- contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix for `run_at()` running immediately if in the past - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Thread pinning fix - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+- Fix for `run_ever()` regression - contributed by [cebtenzzre](https://github.com/cebtenzzre)
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.12 (2025-10-12)
+
+**Features**
+
+- Only building python package and docker image for pushes to the dev branch
+- Filtering disabled apps from `AllAppConfig.dependency_graph()`
+- Added an assert about `pin_threads` being less than `total_threads` if both are specified
+- Added a `TESTING` update mode for `check_app_updates`
+- Refactored startup/shutdown
+- New timedelta/datetime/sun event string parsing
+    - Changed `ADAPI.run_at` to use new datetime parsing
+    - Changed `ADAPI.run_daily` to use new datetime parsing
+- Bumped versions in CI pipeline
+    - uv version
+    - Docker build/push version
+- Improved error messages
+    - for failed connections to Home Assistant
+    - for failed HTTP requests to Home Assistant
+- Improved error messages for custom plugins
+- Parsing various timedeltas in config with `utils.parse_timedelta`
+- Add callback argument to Dashboard's call_service - contributed by [psolyca](https://github.com/psolyca)
+- Added docstrings to `HassPlugin` methods and added it to the reference in the docs.
+
+**Fixes**
+
+- Config models
+    - Edge case that broke the logging config
+    - `persistent` gets set for namespaces if `writeback` is.
+- Debug log messages for state changes with `None` as the old state
+- Type hints for async state callbacks
+- Various type hints
+- Reverted discarding of events during app initialize methods to pre-4.5  by default and added an option to turn it on if required (should fix run_in() calls with a delay of 0 during initialize, as well as listen_state() with a duration and immediate=True)
+- Fixed logic in presence/person constraints
+- Fixed logic in calling services from HA so that things like `input_number/set_value` work with entities in the `number` domain
+- Fixed {py:meth}`~appdaemon.plugins.hass.hassapi.Hass.get_history` for boolean objects
+- Fixed config models to allow custom plugins
+- Fixed a bug causing spurious state refreshes - contributed by [FredericMa](https://github.com/FredericMa)
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.11 (2025-06-23)
+
+**Features**
+
+- Add skin parameter to dash_navigate function for dynamic theme switching - contributed by [Vitor](https://github.com/vitorrm)
+- Improved error handling for service calls
+
+
+**Fixes**
+
+- Parameter passing in notify()
+- Fix for `run_at_sunset()` and `run_at_sunrise()` defaults
+- Fix for production mode service call
+- Additional Scheduler API fixes
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.10 (2025-06-06)
+
+**Features**
+
+- Added "log_level" directive to `appdaemon'yaml` to allow global log level setting
+
+**Fixes**
+
+- Upgrading pip version to latest in Dockerfile
+- Passing through `timeout` kwarg in `dash_navigate` and `fire_event`
+- Fixed a bug with `parse_timedelta` in cases like `"00:2.5"`
+- Minor type fixes
+- Added missing `name` attributes to some classes that use `run_in_executor`
+- Fixed `diable_apps`
+- Fix for constrain_input_select when it is a string - contributed by [Xavi Moreno](https://github.com/xaviml)
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.8 (2025-06-03)
+
+**Features**
+
+None
+
+**Fixes**
+
+- Fix for time & day constraints
+- Additional error checking around websocket aceesses for HASS
+- restored metadata to service callbacks
+- refactor of services dictionary access
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.7 (2025-06-01)
+
+**Features**
+
+None
+
+**Fixes**
+
+- Fixed issue with getter that prevented app initialization
+- Fixed an async issue with `firendly_name()`
+- Added missing setter for global_vars
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.5 (2025-05-30)
+
+**Features**
+
+None
+
+**Fixes**
+
+- Fixed an error with `RequestHandlerException` in the HTTP subsystem
+- Fixed uptime sensor returning negative days in AUI
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.4 (2025-05-29)
+
+**Features**
+
+None
+
+**Fixes**
+
+- Fixed a cosmetic error on admin stream disconnect
+- Fixed spurious entry in service dictionary causing dashboard `__name`` errors
+- Added setter for setter for `pin_apps`
+- Passing through keyword arguments to `render_template`
+- Fixed a bug in the error text for apps in a custom app_dir
+- Fix for wait_state - contributed by [Kostas Chatzikokolakis](https://github.com/chatziko)
+- fix constrain_input_select when not a list - contributed by [Xavi Moreno](https://github.com/xaviml)
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.3 (2025-05-28)
+
+**Features**
+
+- Filled in `integration_entities` stub
+
+**Fixes**
+
+- Reverted async methods
+    - `set_app_pin`
+    - `get_app_pin`
+    - `set_pin_thread`
+    - `get_pin_thread`
+    - `get_plugin_config`
+    - `namespace_exists`
+    - `get_plugin_config`
+    - `anyone_home`
+    - `everyone_home`
+    - `noone_home`
+- Fixed a fictitious reference to `performance` writeback mode
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.2 (2025-05-27)
+
+**Features**
+
+None
+
+**Fixes**
+
+- Revert unintentional sync vs async changes
+- Respecting the `disable` key in app configurations when
+    - processing module import order
+    - processing app start order
+- Fixed a bug where a failed app could get re-introduced to the start order only to fail again
+- Fixed a bug where changing files at exactly right time would throw an error
+- Files with syntax errors get added to `bad_files` list, even if they aren't used for apps
+- Improved error text for `ImportErrors` and `SyntaxErrors` in user apps
+- Add a fix to the http component to handle URLs with no port, and URLs with port 80
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.1 (2025-05-26)
+
+**Features**
+
+- Added support for codespell for doc spell checking - contributed by [Dr.Yarik](https://github.com/yarikoptic)
+
+**Fixes**
+
+- Fixed an issue with dashboards not loading
+- Fixed an issue with entity get_state()
+- Fixed an issue with log()'s ascii_encode not being honored
+- Fixed an issue with assertions when checking input_boolean constraints
+
+**Breaking Changes**
+
+None
+
+**Changes in Behavior**
+
+None
+
+## 4.5.0 (2025-05-25)
+
+**Features**
+
+- Project updates
+    - Remove support for Python 3.8 and 3.9
+    - Added support for Python 3.12
+    - Update docker image to Alpine 3.21/Python 3.12
+- App Management rewrite - contributed by [John Lancaster](https://github.com/jsl12)
+    - AppDaemon automatically detects dependencies between app files by parsing them with the ``ast`` module.
+    - Makes all the global module stuff obsolete.
+- HASS Plugin rewrite - contributed by [John Lancaster](https://github.com/jsl12)
+    - Upgraded HASS plugin to use the aiohttp websocket client
+    - Upgraded HASS plugin to use the Websocket API where possible
+    - Implemented value return for HASS Service Calls
+    - Added additional functions based on rendering templates for Areas, Devices, and Labels
+- Configuration validation - Added pydantic validation to most user input
 - Added Pirateweather widget - contributed by [Dave Dixon](https://github.com/DaveDixon)
 - Added ability to know the topic associated with an MQTT message decode error
-- Added `expert` mode for python imports via the `import_method` directive
-- Added `import_path` directive to enable python imports from arbitary paths
+- Added `import_path` directive to enable python imports from arbitrary paths
 - Added access to the request object for both async and non-async http callbacks - contributed by [Eric Severance](https://github.com/esev)
 - Added option for N deg rising|setting to Scheduler._parse_time
 - Added `silent` parameter to `cancel_listen_state()` - contributed by [Daniel Rocha](https://github.com/danroc)
-- Remove support for python 3.8 and 3.9
-- Added support for python 3.12 & 3.13
-- Update docker image to Alpine 3.21/Python 3.13
-- Upgraded HASS plugin to use the aiohttp websocket client
-- Upgraded HASS plugin to use the Websocket API where possible
-- Implemented value return for HASS Service Calls
 - added the ``--write_toml`` as an AppDaemon startup parameter to force AD to use the ``TOML`` format when creating new apps using the
 - Upgraded Material Design icons to 7.4.47 - - contributed by [Daniel Rocha](https://github.com/danroc)
+- Rewrote app dependency tracking and added automatic tracking of global modules, deprecated associated global directives in apps.yaml
 
 **Fixes**
 
@@ -31,6 +364,7 @@
 **Breaking Changes**
 
 - AppDaemon no longer supports versions of Python prior to 3.10. This is in line with other packages, and allows us to keep the code base up to date and current with the latest developments
+- Services with the Alexa integration have a naming conflict with its `target` argument and the `target` expected by the websocket API. Service calls may have to be adjusted. See [advanced service calls](https://appdaemon.readthedocs.io/en/latest/HASS_API_REFERENCE.html#advanced-service-calls) for more information.
 
 **Changes in Behavior**
 
@@ -39,6 +373,27 @@
 - AppDaemon will now discard any events that it attempts to process for an App that is initializing. This is intended to prevent race conditions during App Initialization
 - The ``--toml`` flag has been deprecated. AppDaemon will now work transparently with either yaml or toml files, allowing the user to mix and match and convert from one format to another over time. In the event of a conflict, the yaml file will take precedence.
 
+**Things to Look Out For**
+
+Release 4.5 of AppDaemon has been a long time coming, and this is in part due to the fact that we have rewritten some of the core parts of AppDaemon to make them more efficient and to provide a better platform for future development. While we have made avery effort to test the code, the wide variety of installs and usages of AppDaemon may throw up some unanticipated issues. For this reason, we recommend that upgrades to 4.5 are done with caution, and ideally with a backout plan. We will be releasing fixes for any issues with a rapid cadence until we are confident that things are stable again, however, those for whom stability is important might want to wait for one or two point releases before upgrading to 4.5.x.
+
+Areas that have been affected include:
+
+- Loading and dependencies of apps: we believe that the new system is practically identical to the old, but it is entirely new code
+- The reason for the above is that we now handle dependencies in global python modules without the need to mark them as such, and correctly reload all apps. This functionality never worked correctly in previous versions of AppDaemon, but should now be a seamless experience
+- Because of the above, although we don't enforce specific app hierarchies, some work better than others, especially if you are using global modules. The new guidelines are published in the [Appdir Structure](https://appdaemon.readthedocs.io/en/latest/APPGUIDE.html#appdir-structure) of the docs.
+- Most user input is now validated using Pydantic. This means that any input files such as `appdaemon.yaml` and `apps.yaml` will now produce warnings if additional or incorrectly named fields are present. In some cases this may result in AppDaemon's refusal to start. We will log reasons for such events to the standard log files to enable you to troubleshoot
+- Please note that in cases where errors occur before the `AppDaemon.yaml` file has been processed, these errors will be logged to standard out, since we cannot rely on configuration info to tell us where the logs should go. For this reason, if AppDaemon does not start after the upgrade, and you get no logging CHECK STANDARD OUT FOR ANY ERRORS:
+    - For a standard venv install this could be on the terminal
+    - For docker, you will need to look at docker logs
+    - For the HomeAssistant addon, you should check the addon logs.
+- The Home Assistant plugin has been rewritten to enable return information from HomeAssistamt service calls. This required some large changes under the hood but should be seamless. As a result of this it is  now possible to configure AppDaemon to obtain return information from all service calls whether they return data or not. Although this is not the default behavior, if enabled this may reveal issues with slow to complete service calls to for instance ZWave items that were not apparent before.
+
+If you find any issues, please  log them at AppDaemon's [Github](https://github.com/AppDaemon/appdaemon/issues):
+
+Or drop into our [Discord Server](https://discord.gg/aSqVEa5WpT):
+
+Either way, we will do our best to assist you!
 
 ## 4.4.2 (2023-04-16)
 
@@ -128,12 +483,12 @@ None
     Moreno](https://github.com/xaviml)
 - Added the ability to reset a running timer via api
 - Removed a warning from info_timer() for stale handles
-- Added the ability to supress invalid timer handle warnings in
+- Added the ability to suppress invalid timer handle warnings in
     cancel_timer()
 - All scheduler calls and helper functions now support fractional
     timestamps. including parse_time() and now_is_between()
 - sunrise(), sunset(), parse_time() and parse_datetime() now allow you
-    to select today\'s sunrise/sunset, rather than the next occuring,
+    to select today\'s sunrise/sunset, rather than the next occurring,
     and specify a number of offset days
 - now_is_between() now supports specification of a timethat can be
     used for testing rather than using the current time
@@ -154,7 +509,7 @@ None
 - Fixed issue with the inability to know which app\'s callback failed
     [constrain_state]{.title-ref} check
 - Fixed issue with AD giving messed up error messages
-- Fixed an issue with scheduler.now_is_between() where it wasn\'t
+- Fixed an issue with scheduler.now_is_between() where it wasn't
     zeroing out microseconds leading to race conditions
 - Fixed another issue with now_is_between() relating to sunrise &
     sunset periods spanning midnight
@@ -446,7 +801,7 @@ None
     example if wanting to persist entities within MQTT namespace
 - Moved the `appdaemon` reladed services to the `admin` namespace. So
     no more `appdaemon` namespace
-- Added services for creating, editting, removing, enabling, disabling
+- Added services for creating, editing, removing, enabling, disabling
     apps
 - Added ability to receive binary payload from MQTT broker
 - Added [cchardet](https://pypi.org/project/cchardet) and
@@ -478,7 +833,7 @@ None
     [event/state/log/timer]{.title-ref}, it gives no warning its invalid
 - Fixed an issue with stream api using [get_state]{.title-ref} api
     call
-- Fixed Azure packages by droping deprecated packages - contributed by
+- Fixed Azure packages by dropping deprecated packages - contributed by
     [freezeboy](https://github.com/freezeboy)
 - Prevent the ability for apps to register services in non-existent
     namespaces
@@ -561,7 +916,7 @@ None
 - If using user defined namespace, there is need to delete the present
     ones in the `namespaces` directory.
 - Due to the removal of the [appdaemon]{.title-ref} namespace, if
-    anyone was manaully making a service call using it, will need to be
+    anyone was manually making a service call using it, will need to be
     updated
 - `binary` is now a reserved keyword argument used when listening to
     MQTT events
@@ -815,7 +1170,7 @@ None
 - Added callback locking decorators
 - Rearchitected the work Q to allow App pinning and avoid re-entrant
     and concurrent code if desired
-- Implemented multiple worker Ques to avoid Head of Line blocking
+- Implemented multiple worker Quest to avoid Head of Line blocking
 - API Calls to control app pinning
 - Added the `run_in_thread()` api call - with assistance from
     [Odianosen Ejale](https://github.com/Odianosen25)

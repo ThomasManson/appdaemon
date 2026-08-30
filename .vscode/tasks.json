@@ -6,37 +6,7 @@
             "label": "Run Dev",
             "command": "${command:python.interpreterPath}",
             "args": ["-m", "appdaemon", "-c", "/conf/ad_config/production"],
-            "type": "shell",
-            "presentation":
-                {
-                    "echo": true,
-                    "reveal": "always",
-                    "focus": false,
-                    "panel": "shared",
-                    "showReuseMessage": false,
-                    "clear": true
-                },
-        },
-        {
-            "label": "Build Docs",
-            "command": "sphinx-build",
-            "args": ["-T", "-E", "${workspaceFolder}/docs", "${workspaceFolder}/.docs_build"],
-            "type": "shell",
-            "presentation":
-                {
-                    "echo": true,
-                    "reveal": "always",
-                    "focus": false,
-                    "panel": "shared",
-                    "showReuseMessage": false,
-                    "clear": true
-                },
-        },
-        {
-            "label": "Auto Build Docs",
-            "command": "sphinx-autobuild",
-            "args": ["-T", "-E", "${workspaceFolder}/docs", "${workspaceFolder}/.docs_build", "--port", "9999"],
-            "type": "shell",
+            "type": "process",
             "presentation":
                 {
                     "echo": true,
@@ -49,80 +19,199 @@
         },
         {
             "label": "Build Package",
-            "command": "python",
-            "args": ["-m", "build"],
+            "detail": "Builds the package as a wheel file in the dist/ directory",
             "type": "shell",
+            "problemMatcher": [],
+            "command": "uv",
+            "args": ["build", "--wheel"],
+            "group": "build",
+            "presentation":
+                {
+                    "reveal": "always",
+                    "clear": true,
+                    "focus": false,
+                    "panel": "shared",
+                },
+        },
+        {
+            "label": "Build Docker Image",
+            "detail": "Builds the Docker image for the application",
+            "dependsOn": "Build Package",
+            "type": "shell",
+            "problemMatcher": [],
+            "command": "${workspaceFolder}/scripts/docker-build.sh",
+            "group": "build",
+            "presentation":
+                {
+                    "reveal": "always",
+                    "clear": true,
+                    "focus": true,
+                    "panel": "shared",
+                },
+        },
+        {
+            "label": "Build Multi-Platform Docker Images",
+            "detail": "Builds Docker images for multiple platforms and analyzes their sizes",
+            "type": "shell",
+            "problemMatcher": [],
+            "command": "${workspaceFolder}/scripts/multiplatform-docker-build.sh",
+            "group": "build",
+            "presentation":
+                {
+                    "reveal": "always",
+                    "clear": true,
+                    "focus": true,
+                    "panel": "shared",
+                },
+        },
+        {
+            "label": "Build Docs",
+            "detail": "Builds the docs into a self-contained set of HTML files using Sphinx",
+            "type": "shell",
+            "problemMatcher": [],
+            "command": "uv",
+            "args": [
+                "run",
+                "--locked",
+                "--group", "doc",
+                "sphinx-build", "-T", "-E",
+                "${workspaceFolder}/docs",
+                "${workspaceFolder}/.docs_build"
+            ],
             "presentation":
                 {
                     "echo": true,
                     "reveal": "always",
                     "focus": false,
                     "panel": "shared",
-                    "showReuseMessage": false,
+                    "showReuseMessage": true,
                     "clear": true
                 },
         },
         {
-            "label": "Build Runtime Requirements",
-            "command": "pip-compile",
-            "args": ["--resolver=backtracking",  "--upgrade", "pyproject.toml"],
-            "type": "shell",
+            "label": "Auto Build Docs",
+            "detail": "Runs the Sphinx documentation server on localhost:9999 with live reloading.",
+            "type": "process",
+            "problemMatcher": [],
+            "command": "uv",
+            "args": [
+                "run",
+                "--locked",
+                "--group", "doc",
+                "sphinx-autobuild",
+                "--show-traceback", "--fresh-env",
+                "--host", "0.0.0.0",
+                "--port", "9999",
+                "--watch", "${workspaceFolder}/appdaemon",
+                "--watch", "${workspaceFolder}/tests",
+                "${workspaceFolder}/docs",
+                "${workspaceFolder}/build/docs",
+            ],
             "presentation":
                 {
                     "echo": true,
                     "reveal": "always",
                     "focus": false,
                     "panel": "shared",
-                    "showReuseMessage": false,
+                    "showReuseMessage": true,
                     "clear": true
                 },
-        },
-        {
-            "label": "Build Dev Requirements",
-            "command": "pip-compile",
-            "args": ["--extra=dev", "--output-file=dev-requirements.txt", "--resolver=backtracking",  "--upgrade", "pyproject.toml"],
-            "type": "shell",
-            "presentation":
-                {
-                    "echo": true,
-                    "reveal": "always",
-                    "focus": false,
-                    "panel": "shared",
-                    "showReuseMessage": false,
-                    "clear": true
-                },
-        },
-        {
-            "label": "Build Doc Requirements",
-            "command": "pip-compile",
-            "args": ["--extra=doc", "--output-file=doc-requirements.txt", "--resolver=backtracking", "--upgrade", "pyproject.toml"],
-            "type": "shell",
-            "presentation":
-                {
-                    "echo": true,
-                    "reveal": "always",
-                    "focus": false,
-                    "panel": "shared",
-                    "showReuseMessage": false,
-                    "clear": true
-                },
-        },
-        {
-            "label": "Build All Requirements",
-            "dependsOn": ["Build Runtime Requirements", "Build Dev Requirements", "Build Doc Requirements"]
         },
         {
             "label": "Install Dependencies",
-            "command": "pip",
-            "args": ["install", "-r", "requirements.txt", "-r", "doc-requirements.txt", "-r", "dev-requirements.txt"],
+            "detail": "Installs all the dependencies, including dev and doc groups",
             "type": "shell",
+            "problemMatcher": [],
+            "command": "uv",
+            "args": ["sync", "--locked", "--all-groups"],
             "presentation":
                 {
                     "echo": true,
                     "reveal": "always",
                     "focus": false,
                     "panel": "shared",
-                    "showReuseMessage": false,
+                    "showReuseMessage": true,
+                    "clear": true
+                },
+        },
+        {
+            "label": "Ruff Statistics",
+            "detail": "Displays the statistics of all the linting violations",
+            "type": "shell",
+            "problemMatcher": [],
+            "command": "uv",
+            "args": ["run", "ruff", "check", "--statistics"],
+            "presentation":
+                {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared",
+                    "showReuseMessage": true,
+                    "clear": true
+                },
+        },
+        {
+            "label": "Ruff Lint Watch",
+            "detail": "Runs the auto linter when files change",
+            "type": "process",
+            "problemMatcher": [],
+            "command": "uv",
+            "args": ["run", "ruff", "check", "--watch"],
+            "presentation":
+                {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": false,
+                    "panel": "shared",
+                    "showReuseMessage": true,
+                    "clear": true
+                },
+        },
+        {
+            "label": "Install Pre-commit Hooks",
+            "detail": "Runs the pre-commit hooks.",
+            "type": "process",
+            "problemMatcher": [],
+            "command": "uv",
+            "args": [
+                "run",
+                "--locked",
+                "--group", "dev",
+                "pre-commit", "install", "-f",
+            ],
+            "presentation":
+                {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": true,
+                    "panel": "shared",
+                    "showReuseMessage": true,
+                    "clear": true
+                },
+        },
+        {
+            "label": "Run Pre-commit Hooks",
+            "detail": "Runs the pre-commit hooks.",
+            "type": "process",
+            "problemMatcher": [],
+            "command": "uv",
+            "args": [
+                "run",
+                "--locked",
+                "--group", "dev",
+                "pre-commit", "run",
+                "--all-files",
+                "--show-diff-on-failure",
+                "--color=always",
+            ],
+            "presentation":
+                {
+                    "echo": true,
+                    "reveal": "always",
+                    "focus": true,
+                    "panel": "shared",
+                    "showReuseMessage": true,
                     "clear": true
                 },
         },

@@ -91,7 +91,7 @@ Pip
 Linux
 ^^^^^
 
-**Requirements**: Python version `3.8`, `3.9`, `3.10` or `3.11`.
+**Requirements**: Python version `3.10` or `3.11`.
 
 **NOTE:** Do not install this in the same Python virtual environment as Home Assistant.
 If you do that, then Home Assistant will stop working due to conflicting dependencies.
@@ -217,7 +217,7 @@ A brief description of them follows:
 
     If no file is found in either location, AppDaemon will raise an exception. In addition, AppDaemon expects to find a dir named ``apps`` immediately subordinate to the config directory.
 
-``-C`` name of the configuration file (default: ``appdaemon.yaml`` or ``appdaemon.toml``)
+``-C`` name of the configuration file (default: ``appdaemon.yaml`` or ``appdaemon.toml`` depending on the value of the ``--toml`` flag)
 
 .. TODO: document -d in appdaemon help text
 
@@ -298,7 +298,7 @@ are set according to your setup.
 - CONFIG_DIR
    - Location of Home Assistant config.
 
-::
+.. code-block:: shell
 
     #!/bin/sh
     ### BEGIN INIT INFO

@@ -1,33 +1,36 @@
+import asyncio
 import os
-import os.path
 import threading
-from asyncio import BaseEventLoop
+from asyncio import AbstractEventLoop
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Union
+from threading import RLock
+from typing import TYPE_CHECKING, Any
 
-import appdaemon.utils as utils
-from appdaemon.admin_loop import AdminLoop
-from appdaemon.app_management import AppManagement
-from appdaemon.callbacks import Callbacks
-from appdaemon.events import Events
-from appdaemon.futures import Futures
-from appdaemon.plugin_management import Plugins
-from appdaemon.scheduler import Scheduler
-from appdaemon.sequences import Sequences
-from appdaemon.services import Services
-from appdaemon.state import State
-from appdaemon.thread_async import ThreadAsync
-from appdaemon.threading import Threading
-from appdaemon.utility_loop import Utility
+from .admin_loop import AdminLoop
+from .app_management import AppManagement
+from .callbacks import Callbacks
+from .events import Events
+from .futures import Futures
+from .models.config import AppDaemonConfig
+from .plugin_management import PluginManagement
+from .scheduler import Scheduler
+from .sequences import Sequences
+from .services import Services
+from .state import State
+from .thread_async import ThreadAsync
+from .threads import Threading
+from .utility_loop import Utility
 
 if TYPE_CHECKING:
-    from appdaemon.http import HTTP
-    from appdaemon.logging import Logging
+    from .http import HTTP
+    from .logging import Logging
 
 
 class AppDaemon:
-    """Top-level container for the subsystem objects. This gets passed to the subsystem objects and stored in them as the ``self.AD`` attribute.
+    """Top-level container for the subsystem objects. This gets passed to the subsystem objects and stored in them as
+    the ``self.AD`` attribute.
 
     Asyncio:
 
@@ -70,311 +73,369 @@ class AppDaemon:
     """
 
     # asyncio
-    loop: BaseEventLoop
+    loop: AbstractEventLoop
     """Main asyncio event loop
     """
     executor: ThreadPoolExecutor
     """Executes functions from a pool of async threads. Configured with the ``threadpool_workers`` key. Defaults to 10.
     """
+    exit_stack: ExitStack
 
     # subsystems
     app_management: AppManagement
     callbacks: Callbacks
     events: Events
     futures: Futures
-    http: "HTTP"
     logging: "Logging"
-    plugins: Plugins
+    plugins: PluginManagement
     scheduler: Scheduler
     services: Services
     sequences: Sequences
     state: State
     threading: Threading
+    thread_async: ThreadAsync
     utility: Utility
 
-    # shut down flag
-    stopping: bool
+    admin_loop: "AdminLoop | None" = None
+    http: "HTTP | None" = None
+    global_lock: RLock = RLock()
 
-    # settings
-    app_dir: Union[str, Path]
-    """Defined in the main YAML config under ``appdaemon.app_dir``. Defaults to ``./apps``
-    """
-    config_dir: Union[str, Path]
-    """Path to the AppDaemon configuration files. Defaults to the first folder that has ``./apps``
+    stop_event: asyncio.Event
+    """Flag to indicate that AppDaemon is stopping. Set by :meth:`~.appdaemon.AppDaemon.stop` and checked by subsystems."""
+    stop_time: float = 0.0
+    """Stores the value of perf_counter() when self.stop is first called."""
 
-    - ``~/.homeassistant``
-    - ``/etc/appdaemon``
-    """
-    apps: bool
-    """Flag for whether ``disable_apps`` was set in the AppDaemon config
-    """
-
-    def __init__(self, logging: "Logging", loop: BaseEventLoop, **kwargs):
+    def __init__(
+        self,
+        logging: "Logging",
+        loop: AbstractEventLoop,
+        ad_config_model: AppDaemonConfig,
+        exit_stack: ExitStack | None = None,
+    ) -> None:
         self.logging = logging
-        self.logging.register_ad(self)
-        self.logger = logging.get_logger()
-        self.threading = None
-        self.callbacks = None
-        self.futures = None
-        self.state = None
-
-        self.config = kwargs
-        self.booted = "booting"
-        self.config["ad_version"] = utils.__version__
-        self.check_app_updates_profile = ""
-
-        self.executor = None
-        self.loop = None
-        self.srv = None
-        self.appd = None
-        self.stopping = False
-        self.http = None
-        self.admin_loop = None
-
-        self.global_vars = {}
-        self.global_lock = threading.RLock()
-
-        self.config_file_modified = 0
-
-        self.sched = None
-        self.thread_async = None
-        self.utility = None
-        self.module_debug = kwargs["module_debug"]
-
-        # User Supplied/Defaults
-
-        self.load_distribution = "roundrobbin"
-        utils.process_arg(self, "load_distribution", kwargs)
-
-        self.app_dir = None
-        utils.process_arg(self, "app_dir", kwargs)
-
-        self.starttime = None
-        utils.process_arg(self, "starttime", kwargs)
-
-        self.latitude = None
-        utils.process_arg(self, "latitude", kwargs, float=True)
-
-        self.longitude = None
-        utils.process_arg(self, "longitude", kwargs, float=True)
-
-        self.elevation = None
-        utils.process_arg(self, "elevation", kwargs, int=True)
-
-        self.time_zone = None
-        utils.process_arg(self, "time_zone", kwargs)
-
-        self.tz = None
         self.loop = loop
+        self.exit_stack = exit_stack if exit_stack is not None else ExitStack()
+        self.config = ad_config_model
+        self.booted = "booting"
+        self.logger = logging.get_logger()
+        self.logging.register_ad(self)  # needs to go last to reference the config object
+        self._shutdown_logger = self.logging.get_child("_shutdown")
+        self.stop_event = asyncio.Event()
 
-        self.logfile = None
-        self.errfile = None
+        self.global_vars: Any = {}
+        self.main_thread_id = threading.current_thread().ident
 
-        self.config_file = None
-        utils.process_arg(self, "config_file", kwargs)
-
-        self.config_dir = None
-        utils.process_arg(self, "config_dir", kwargs)
-
-        self.timewarp = 1
-        utils.process_arg(self, "timewarp", kwargs, float=True)
-
-        self.max_clock_skew = 1
-        utils.process_arg(self, "max_clock_skew", kwargs, int=True)
-
-        self.thread_duration_warning_threshold = 10
-        utils.process_arg(self, "thread_duration_warning_threshold", kwargs, float=True)
-
-        self.threadpool_workers = 10
-        utils.process_arg(self, "threadpool_workers", kwargs, int=True)
-
-        self.endtime = None
-        utils.process_arg(self, "endtime", kwargs)
-
-        self.loglevel = "INFO"
-        utils.process_arg(self, "loglevel", kwargs)
-
-        self.api_port = None
-        utils.process_arg(self, "api_port", kwargs)
-
-        self.utility_delay = 1
-        utils.process_arg(self, "utility_delay", kwargs, int=True)
-
-        self.admin_delay = 1
-        utils.process_arg(self, "admin_delay", kwargs, int=True)
-
-        self.max_utility_skew = self.utility_delay * 2
-        utils.process_arg(self, "max_utility_skew", kwargs, float=True)
-
-        self.check_app_updates_profile = False
-        utils.process_arg(self, "check_app_updates_profile", kwargs)
-
-        self.production_mode = False
-        utils.process_arg(self, "production_mode", kwargs)
-
-        self.invalid_config_warnings = True
-        utils.process_arg(self, "invalid_config_warnings", kwargs)
-
-        self.use_toml = False
-        utils.process_arg(self, "use_toml", kwargs)
-
-        self.missing_app_warnings = True
-        utils.process_arg(self, "missing_app_warnings", kwargs)
-
-        self.log_thread_actions = False
-        utils.process_arg(self, "log_thread_actions", kwargs)
-
-        self.qsize_warning_threshold = 50
-        utils.process_arg(self, "qsize_warning_threshold", kwargs, int=True)
-
-        self.qsize_warning_step = 60
-        utils.process_arg(self, "qsize_warning_step", kwargs, int=True)
-
-        self.qsize_warning_iterations = 10
-        utils.process_arg(self, "qsize_warning_iterations", kwargs, int=True)
-
-        self.internal_function_timeout = 60
-        utils.process_arg(self, "internal_function_timeout", kwargs, int=True)
-
-        self.use_dictionary_unpacking = False
-        utils.process_arg(self, "use_dictionary_unpacking", kwargs)
-
-        self.use_stream = False
-        utils.process_arg(self, "use_stream", kwargs)
-
-        self.import_paths = []
-        utils.process_arg(self, "import_paths", kwargs)
-
-        self.import_method = "normal"
-        utils.process_arg(self, "import_method", kwargs)
-
-        self.namespaces = {}
-        utils.process_arg(self, "namespaces", kwargs)
-
-        self.exclude_dirs = ["__pycache__"]
-        if "exclude_dirs" in kwargs:
-            self.exclude_dirs += kwargs["exclude_dirs"]
-
-        self.stop_function = None
-        utils.process_arg(self, "stop_function", kwargs)
-
-        if not kwargs.get("cert_verify", True):
-            self.certpath = False
-
-        if kwargs.get("disable_apps") is True:
-            self.apps = False
-            self.logging.log("INFO", "Apps are disabled")
-        else:
-            self.apps = True
-
-        #
-        # Set up services
-        #
-        self.services = Services(self)
-
-        #
-        # Set up sequences
-        #
-        self.sequences = Sequences(self)
-
-        #
-        # Set up scheduler
-        #
-        self.sched = Scheduler(self)
-
-        #
-        # Set up state
-        #
-        self.state = State(self)
-
-        #
-        # Set up events
-        #
-        self.events = Events(self)
-
-        #
-        # Set up callbacks
-        #
+        # Initialize subsystems
         self.callbacks = Callbacks(self)
-
-        #
-        # Set up futures
-        #
+        self.events = Events(self)
+        self.services = Services(self)
+        self.sequences = Sequences(self)
+        self.sched = Scheduler(self)
+        self.state = State(self)
+        self.thread_async = ThreadAsync(self)
         self.futures = Futures(self)
 
-        if self.apps is True:
+        if not self.apps_enabled:
+            self.logger.info("Apps are disabled, skipping app management initialization")
+        else:
+            assert self.config_dir is not None, "Config_dir not set. This is a development problem"
+            assert self.config_dir.exists(), f"{self.config_dir} does not exist"
+            assert os.access(
+                self.config_dir,
+                os.R_OK | os.X_OK,
+            ), f"{self.config_dir} does not have the right permissions"
+
+            # this will always be None because it never gets set in ad_kwargs in __main__.py
             if self.app_dir is None:
-                if self.config_dir is None:
-                    self.app_dir = utils.find_path("apps")
-                    self.config_dir = os.path.dirname(self.app_dir)
-                else:
-                    self.app_dir = os.path.join(self.config_dir, "apps")
+                self.app_dir = self.config_dir / "apps"
+                if not self.app_dir.exists():
+                    self.app_dir.mkdir()
+                assert os.access(
+                    self.app_dir,
+                    os.R_OK | os.W_OK | os.X_OK,
+                ), f"{self.app_dir} does not have the right permissions"
 
-            utils.check_path("config_dir", self.logger, self.config_dir, permissions="rwx")
-            utils.check_path("appdir", self.logger, self.app_dir)
+            self.logger.info(f"Using {self.app_dir} as app_dir")
 
-            self.config_dir = os.path.abspath(self.config_dir)
-            self.app_dir = os.path.abspath(self.app_dir)
+            self.app_management = AppManagement(self)
 
-            # Initialize Apps
-
-            self.app_management = AppManagement(self, self.use_toml)
-
-            # threading setup
-
-            self.threading = Threading(self, kwargs)
-
-        self.stopping = False
-
-        #
-        # Set up Executor ThreadPool
-        #
-        if "threadpool_workers" in kwargs:
-            self.threadpool_workers = int(kwargs["threadpool_workers"])
-
+        self.threading = Threading(self)
         self.executor = ThreadPoolExecutor(max_workers=self.threadpool_workers)
-
-        # Initialize Plugins
-        args = kwargs.get("plugins", None)
-        self.plugins = Plugins(self, args)
-
-        # Create thread_async Loop
-        self.logger.debug("Starting thread_async loop")
-        if self.apps is True:
-            self.thread_async = ThreadAsync(self)
-            loop.create_task(self.thread_async.loop())
-
-        # Create utility loop
-        self.logger.debug("Starting utility loop")
         self.utility = Utility(self)
-        loop.create_task(self.utility.loop())
+        self.plugins = PluginManagement(self, self.config.plugins)
 
-    def stop(self):
-        """Called by the signal handler to shut AD down.
+    #
+    # Property definitions
+    #
 
-        Also stops
+    @property
+    def api_port(self) -> int | None:
+        return self.config.api_port
 
-        - :class:`~.admin_loop.AdminLoop`
-        - :class:`~.thread_async.ThreadAsync`
-        - :class:`~.scheduler.Scheduler`
-        - :class:`~.utility_loop.Utility`
-        - :class:`~.plugin_management.Plugins`
+    @property
+    def app_dir(self) -> Path:
+        """Defined in the main YAML config under ``appdaemon.app_dir``. Defaults to ``./apps``"""
+        return self.config.app_dir
+
+    @app_dir.setter
+    def app_dir(self, path: os.PathLike) -> None:
+        self.config.app_dir = Path(path)
+
+    @property
+    def apps_enabled(self):
+        """Flag for whether ``disable_apps`` was set in the AppDaemon config"""
+        return not self.config.disable_apps
+
+    @apps_enabled.setter
+    def apps_enabled(self, value: bool) -> None:
+        """Set whether apps are enabled or disabled"""
+        self.config.disable_apps = not value
+        action = "enabled" if value else "disabled"
+        self.logger.info(f"Apps {action}")
+
+    @property
+    def certpath(self):
+        return self.config.cert_verify
+
+    @property
+    def check_app_updates_profile(self):
+        return self.config.check_app_updates_profile
+
+    @property
+    def config_dir(self):
+        """Path to the AppDaemon configuration files. Defaults to the first folder that has ``./apps``
+
+        - ``~/.homeassistant``
+        - ``/etc/appdaemon``
         """
+        return self.config.config_dir
+
+    @config_dir.setter
+    def config_dir(self, path: os.PathLike) -> None:
+        self.config.config_dir = Path(path)
+
+    @property
+    def config_file(self):
+        return self.config.config_file
+
+    @property
+    def elevation(self):
+        return self.config.elevation
+
+    @property
+    def endtime(self):
+        return self.config.endtime
+
+    @property
+    def exclude_dirs(self):
+        return self.config.exclude_dirs
+
+    @property
+    def import_paths(self):
+        return self.config.import_paths
+
+    @property
+    def invalid_config_warnings(self):
+        return self.config.invalid_config_warnings
+
+    @property
+    def latitude(self):
+        return self.config.latitude
+
+    @property
+    def load_distribution(self):
+        return self.config.load_distribution
+
+    @property
+    def log_thread_actions(self):
+        return self.config.log_thread_actions
+
+    @property
+    def loglevel(self):
+        return self.config.loglevel
+
+    @property
+    def longitude(self):
+        return self.config.longitude
+
+    @property
+    def missing_app_warnings(self):
+        return self.config.invalid_config_warnings
+
+    @property
+    def module_debug(self):
+        return self.config.module_debug
+
+    @property
+    def namespaces(self):
+        return self.config.namespaces
+
+    @property
+    def production_mode(self):
+        return self.config.production_mode
+
+    @production_mode.setter
+    def production_mode(self, mode: bool):
+        self.config.production_mode = mode
+        action = "activated" if mode else "deactivated"
+        self.logger.info("AD Production Mode %s", action)
+
+    @property
+    def qsize_warning_iterations(self):
+        return self.config.qsize_warning_iterations
+
+    @property
+    def qsize_warning_step(self):
+        return self.config.qsize_warning_step
+
+    @property
+    def qsize_warning_threshold(self):
+        return self.config.qsize_warning_threshold
+
+    @property
+    def real_time(self) -> bool:
+        """Flag for whether the AppDaemon instance is running in real time or not."""
+        return self.config.timewarp == 1
+
+    @real_time.setter
+    def real_time(self, value: bool) -> None:
+        """Set the AppDaemon instance to run in real time or not."""
+        if value:
+            self.timewarp = 1.0
+        else:
+            raise NotImplementedError("Setting real_time to False is not supported. Set timewarp to a value other than 1.0 instead.")
+
+    @property
+    def starttime(self):
+        return self.config.starttime
+
+    @property
+    def stopping(self) -> bool:
+        """Check if the AppDaemon instance is stopping."""
+        return self.stop_event.is_set()
+
+    @stopping.setter
+    def stopping(self, value: bool) -> None:
+        """Set the stopping state of the AppDaemon instance."""
+        if value:
+            self.stop_event.set()
+            self.logger.debug("Set stop event")
+        else:
+            self.stop_event.clear()
+
+    @property
+    def thread_duration_warning_threshold(self):
+        return self.config.thread_duration_warning_threshold
+
+    @property
+    def threadpool_workers(self):
+        return self.config.threadpool_workers
+
+    @property
+    def time_zone(self):
+        return self.config.time_zone
+
+    @property
+    def timewarp(self):
+        return self.config.timewarp
+
+    @timewarp.setter
+    def timewarp(self, value: float):
+        """Set the timewarp value for the AppDaemon instance."""
+        if not isinstance(value, (int, float)):
+            raise TypeError("Timewarp must be a number.")
+        self.config.timewarp = value
+        self.logger.info(f"Timewarp set to {value}")
+
+    @property
+    def tz(self):
+        return self.config.time_zone
+
+    @property
+    def use_stream(self):
+        return self.config.use_stream
+
+    @property
+    def write_toml(self):
+        return self.config.write_toml
+
+    @property
+    def utility_delay(self):
+        return self.config.utility_delay
+
+    def start(self) -> None:
+        """Start AppDaemon, which also starts all the component subsystems like the scheduler, etc.
+
+        - :meth:`ThreadAsync <appdaemon.thread_async.ThreadAsync.start>`
+        - :meth:`Utility <appdaemon.utility_loop.Utility.start>`
+
+        Note: The scheduler is started by the utility loop after plugins are ready.
+        """
+        self.logger.debug("Starting AppDaemon")
+        self.thread_async.start()
+        self.utility.start()
+        self.state.start()
+
+    async def stop(self) -> None:
+        """Stop AppDaemon by calling the stop method of the subsystems.
+
+        This does not stop the event loop, but waits for all the existings tasks to finish before returning, which has a 3s timeout.
+
+        - :meth:`AppManagement <appdaemon.app_management.AppManagement.stop>`
+        - :meth:`ThreadAsync <appdaemon.thread_async.ThreadAsync.stop>`
+        - :meth:`Plugins <appdaemon.plugin_management.Plugins.stop>`
+        - :meth:`Scheduler <appdaemon.scheduler.Scheduler.stop>`
+        - :meth:`State <appdaemon.state.State.stop>`
+        """
+        if self.stopping:
+            self._shutdown_logger.debug("AppDaemon.stop() already running, skipping duplicate call")
+            return
+
+        self._shutdown_logger.info("Stopping AppDaemon")
         self.stopping = True
-        if self.admin_loop is not None:
-            self.admin_loop.stop()
+
+        # Subsystems are able to create tasks during their stop methods
+        if self.apps_enabled:
+            try:
+                await asyncio.wait_for(self.app_management.stop(), timeout=3)
+            except asyncio.TimeoutError:
+                self._shutdown_logger.warning("AppManagement stop timed out, continuing shutdown")
         if self.thread_async is not None:
             self.thread_async.stop()
-        if self.sched is not None:
-            self.sched.stop()
-        if self.utility is not None:
-            self.utility.stop()
         if self.plugins is not None:
-            self.plugins.stop()
+            try:
+                await asyncio.wait_for(self.plugins.stop(), timeout=1)
+            except asyncio.TimeoutError:
+                self._shutdown_logger.warning("Timed out stopping plugins, continuing shutdown")
+        self.sched.stop()
+        self.state.stop()
+        self.threading.stop()
 
-    def terminate(self):
-        if self.state is not None:
-            self.state.terminate()
+        self.executor.shutdown(wait=True)
+
+        # This creates a task that will wait for all the ones that were running when stop() was called to finish
+        # before stopping the event loop. This allows subsystems to create tasks during their own stop methods
+        current_task = asyncio.current_task()
+        running_tasks = [task for task in asyncio.all_tasks() if task is not current_task]
+        if running_tasks:
+            all_coro = asyncio.wait(running_tasks, return_when=asyncio.ALL_COMPLETED, timeout=3)
+            gather_task = asyncio.create_task(all_coro, name="appdaemon_stop_tasks")
+            gather_task.add_done_callback(lambda _: self.logger.debug("All tasks finished"))
+            self._shutdown_logger.debug("Waiting for tasks %s to finish...", len(running_tasks))
+
+            # These is left here for future debugging purposes
+            # await asyncio.sleep(2.0)
+            # still_running = [
+            #     task
+            #     for task in asyncio.all_tasks()
+            #     if task is not current_task and task is not gather_task and not task.done()
+            # ]
+            # self._shutdown_logger.debug("%s tasks still running after 2 seconds", len(still_running))
+            # if still_running:
+            #     for task in still_running:
+            #         self._shutdown_logger.debug("Still running: %s", task.get_name())
+
+            await gather_task
 
     #
     # Utilities
@@ -383,11 +444,11 @@ class AppDaemon:
     def register_http(self, http: "HTTP"):
         """Sets the ``self.http`` attribute with a :class:`~.http.HTTP` object and starts the admin loop."""
 
-        self.http: "HTTP" = http
+        self.http = http
         # Create admin loop
 
         if http.old_admin is not None or http.admin is not None:
             self.logger.debug("Starting admin loop")
 
             self.admin_loop = AdminLoop(self)
-            self.loop.create_task(self.admin_loop.loop())
+            self.loop.create_task(self.admin_loop.loop(), name="admin loop")

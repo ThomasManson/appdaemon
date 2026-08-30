@@ -24,7 +24,20 @@ release = __version__
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["sphinx.ext.autodoc", "sphinx.ext.napoleon", "sphinx.ext.intersphinx", "myst_parser"]
+extensions = [
+    "sphinx_copybutton",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
+    "myst_parser"
+]
+
+copybutton_exclude = '.linenos, .gp'
+
+# -- MyST configuration ------------------------------------------------------
+myst_enable_extensions = [
+    "colon_fence",
+]
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]

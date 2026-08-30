@@ -75,17 +75,17 @@ function basefan(widget_id, url, skin, parameters)
 
     function On1ButtonClick(self) {
         args = self.parameters.post_service_speed;
-        args["speed"] = self.parameters.fields.low_speed;
+        args["percentage"] = self.parameters.fields.low_speed;
         self.call_service(self, args);
     }
     function On2ButtonClick(self) {
         args = self.parameters.post_service_speed;
-        args["speed"]= self.parameters.fields.medium_speed;
+        args["percentage"]= self.parameters.fields.medium_speed;
         self.call_service(self, args);
     }
     function On3ButtonClick(self) {
         args = self.parameters.post_service_speed;
-        args["speed"] = self.parameters.fields.high_speed;
+        args["percentage"] = self.parameters.fields.high_speed;
         self.call_service(self, args);
     }
 
@@ -107,12 +107,12 @@ function basefan(widget_id, url, skin, parameters)
         else
         //Fan is on
         {
-            //turn main icon on & dispay speed selector
+            //turn main icon on & display speed selector
             self.set_icon(self, "icon", self.icons.icon_active)
             self.set_field(self, "icon_style", self.css.icon_style_active)
 
             //decide which icon to mark as selected
-            if (state.attributes.speed == self.parameters.fields.low_speed){
+            if (state.attributes.percentage == self.parameters.fields.low_speed){
                 self.set_field(self,"speed1_style", self.css.speed1_style_active)
                 self.set_field(self,"speed2_style", self.css.speed2_style_inactive)
                 self.set_field(self,"speed3_style", self.css.speed3_style_inactive)
@@ -120,7 +120,7 @@ function basefan(widget_id, url, skin, parameters)
                 self.set_icon(self, "icon2", self.icons.icon2_inactive)
                 self.set_icon(self, "icon3", self.icons.icon3_inactive)
             }
-            else if (state.attributes.speed == self.parameters.fields.medium_speed){
+            else if (state.attributes.percentage == self.parameters.fields.medium_speed){
                 self.set_field(self,"speed1_style", self.css.speed1_style_inactive)
                 self.set_field(self,"speed2_style", self.css.speed2_style_active)
                 self.set_field(self,"speed3_style", self.css.speed3_style_inactive)
@@ -128,7 +128,7 @@ function basefan(widget_id, url, skin, parameters)
                 self.set_icon(self, "icon2", self.icons.icon2_active)
                 self.set_icon(self, "icon3", self.icons.icon3_inactive)
             }
-            else if (state.attributes.speed == self.parameters.fields.high_speed){
+            else if (state.attributes.percentage == self.parameters.fields.high_speed){
                 self.set_field(self,"speed1_style", self.css.speed1_style_inactive)
                 self.set_field(self,"speed2_style", self.css.speed2_style_inactive)
                 self.set_field(self,"speed3_style", self.css.speed3_style_active)

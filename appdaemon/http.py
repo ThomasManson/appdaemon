@@ -16,14 +16,17 @@ import feedparser
 from aiohttp import web
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-import appdaemon.admin as adadmin
-import appdaemon.dashboard as addashboard
-import appdaemon.stream.adstream as stream
-import appdaemon.utils as utils
-from appdaemon.exceptions import StartupAbortedException
+from . import exceptions as ade
+from .admin import Admin
+from .dashboard import Dashboard
+from .models.config import MainConfig
+from .stream.adstream import ADStream
+from .utils.file import find_path
+from .utils.functools import convert_json, has_expanded_kwargs
+from .utils.threading import run_in_executor
 
 if TYPE_CHECKING:
-    from appdaemon.appdaemon import AppDaemon
+    from .appdaemon import AppDaemon
 
 
 def securedata(myfunc):
@@ -37,7 +40,7 @@ def securedata(myfunc):
         if self.password is None:
             return await myfunc(*args)
         elif "adcreds" in request.cookies:
-            match = await utils.run_in_executor(
+            match = await run_in_executor(
                 self,
                 bcrypt.checkpw,
                 str.encode(self.password),
@@ -67,7 +70,7 @@ def secure(myfunc):
             return await myfunc(*args)
         else:
             if "adcreds" in request.cookies:
-                match = await utils.run_in_executor(
+                match = await run_in_executor(
                     self,
                     bcrypt.checkpw,
                     str.encode(self.password),
@@ -95,9 +98,7 @@ def route_secure(myfunc):
             return await myfunc(*args)
 
         elif "adcreds" in request.cookies:
-            match = await utils.run_in_executor(
-                self, bcrypt.checkpw, str.encode(self.password), str.encode(request.cookies["adcreds"])
-            )
+            match = await run_in_executor(self, bcrypt.checkpw, str.encode(self.password), str.encode(request.cookies["adcreds"]))
             if match:
                 return await myfunc(*args)
 
@@ -116,23 +117,35 @@ class HTTP:
     AD: "AppDaemon"
     """Reference to the AppDaemon container object
     """
-
-    stopping: bool
+    name: str = "_http"
     executor: concurrent.futures.ThreadPoolExecutor
 
-    def __init__(self, ad: "AppDaemon", loop, logging, appdaemon, dashboard, old_admin, admin, api, http):
-        self.AD = ad
-        self.logging = logging
-        self.logger = ad.logging.get_child("_http")
-        self.access = ad.logging.get_access()
+    start_event: asyncio.Event
 
-        self.appdaemon = appdaemon
-        self.dashboard = dashboard
-        self.dashboard_dir = None
-        self.old_admin = old_admin
-        self.admin = admin
-        self.http = http
-        self.api = api
+    # def __init__(self, ad: AppDaemon, loop, logging, appdaemon, dashboard, old_admin, admin, api, http):
+    def __init__(self, ad: "AppDaemon", main_cfg: MainConfig) -> None:
+        self.AD = ad
+        self.logger = self.logging.get_child(self.name)
+        self.access = self.logging.get_access()
+
+        self.appdaemon = main_cfg.appdaemon
+
+        if main_cfg.hadashboard is not None:
+            self.dashboard = main_cfg.hadashboard.model_dump(mode="python", exclude_none=True, by_alias=True)
+            self.dashboard_dir = (
+                self.AD.config_dir / "dashboards"
+                if main_cfg.hadashboard.dashboard_dir is None
+                else main_cfg.hadashboard.dashboard_dir
+            )  # fmt: skip
+        else:
+            self.dashboard = None
+            self.dashboard_dir = None
+
+        self.old_admin = main_cfg.old_admin
+        self.admin = main_cfg.admin
+        if main_cfg.http is not None:
+            self.http = main_cfg.http.model_dump(mode="json", exclude_none=True, by_alias=True)
+        self.api = main_cfg.api
         self.runner = None
 
         self.template_dir = os.path.join(os.path.dirname(__file__), "assets", "templates")
@@ -146,13 +159,13 @@ class HTTP:
         self.transport = "ws"
 
         self.config_dir = None
-        self._process_arg("config_dir", dashboard)
+        self._process_arg("config_dir", self.dashboard)
 
         self.static_dirs = {}
 
-        self._process_http(http)
-
-        self.stopping = False
+        self._process_http(self.http)
+        if (cfg := main_cfg.http) is not None and (p := cfg.password) is not None:
+            self.password = p.get_secret_value()  # read secret directly
 
         self.app_endpoints = {}
         self.app_routes = {}
@@ -175,11 +188,11 @@ class HTTP:
         self.aui_js_dir = os.path.join(self.install_dir, "assets", "aui/js")
 
         try:
-            url = urlparse(self.url)
-
-            self.host = url.hostname
+            url = urlparse(str(self.http["url"]))
+            net = url.netloc.split(":")
+            self.host = net[0]
             try:
-                self.port = url.port
+                self.port = net[1]
             except IndexError:
                 self.port = 80
 
@@ -193,9 +206,7 @@ class HTTP:
 
             # Setup event stream
 
-            self.stream = stream.ADStream(self.AD, self.app, self.transport)
-
-            self.loop = loop
+            self.stream = ADStream(self.AD, self.app, self.transport)
             self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
 
             if self.ssl_certificate is not None and self.ssl_key is not None:
@@ -210,7 +221,7 @@ class HTTP:
             # API
             #
 
-            if api is not None:
+            if self.api is not None:
                 self.logger.info("Starting API")
                 self.setup_api_routes()
             else:
@@ -220,25 +231,24 @@ class HTTP:
             # Admin
             #
 
-            admin_args = None
-            if admin is not None:
+            if self.admin is not None:
                 self.logger.info("Starting Admin Interface")
 
                 self.stats_update = "realtime"
-                self._process_arg("stats_update", admin)
-                admin_args = admin
+                self._process_arg("stats_update", self.admin)
+                admin_args = self.admin
 
-            if old_admin is not None:
+            if self.old_admin is not None:
                 self.logger.info("Starting Old Admin Interface")
 
                 self.stats_update = "realtime"
-                self._process_arg("stats_update", old_admin)
-                admin_args = old_admin
+                self._process_arg("stats_update", self.old_admin)
+                admin_args = self.old_admin
 
-            if old_admin is not None or admin is not None:
-                self.admin_obj = adadmin.Admin(
+            if self.old_admin is not None or self.admin is not None:
+                self.admin_obj = Admin(
                     self.config_dir,
-                    logging,
+                    self.logging,
                     self.AD,
                     javascript_dir=self.javascript_dir,
                     template_dir=self.template_dir,
@@ -250,14 +260,14 @@ class HTTP:
                     **admin_args,
                 )
 
-            if old_admin is None and admin is None:
+            if self.old_admin is None and self.admin is None:
                 self.logger.info("Admin Interface is disabled")
             #
             # Dashboards
             #
 
-            if dashboard is not None:
-                self._process_dashboard(dashboard)
+            if self.dashboard is not None:
+                self._process_dashboard(self.dashboard)
 
             else:
                 self.logger.info("Dashboards Disabled")
@@ -272,7 +282,7 @@ class HTTP:
             # loop.create_task(f)
 
             if self.dashboard_obj is not None:
-                loop.create_task(self.update_rss())
+                self.loop.create_task(self.update_rss())
 
         except Exception:
             self.logger.warning("-" * 60)
@@ -280,6 +290,30 @@ class HTTP:
             self.logger.warning("-" * 60)
             self.logger.warning(traceback.format_exc())
             self.logger.warning("-" * 60)
+
+    @property
+    def logging(self):
+        return self.AD.logging
+
+    @property
+    def loop(self):
+        return self.AD.loop
+
+    @property
+    def has_been_started(self) -> bool:
+        return self.runner is not None
+
+    def __enter__(self, *args, **kwargs) -> asyncio.Event:
+        self.start_event = asyncio.Event()
+        start_task = self.AD.loop.create_task(self.start_server())
+        start_task.add_done_callback(lambda t: self.start_event.set())
+        return self.start_event
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.start_event.clear()
+        if self.runner is not None:
+            self.loop.run_until_complete(self.stop_server())
+            # self.loop.create_task(self.stop_server())
 
     def _process_dashboard(self, dashboard):
         self.logger.info("Starting Dashboards")
@@ -318,7 +352,7 @@ class HTTP:
 
         if self.dashboard_dir is None:
             if self.config_dir is None:
-                self.dashboard_dir = utils.find_path("dashboards")
+                self.dashboard_dir = find_path("dashboards")
             else:
                 self.dashboard_dir = os.path.join(self.config_dir, "dashboards")
 
@@ -333,11 +367,11 @@ class HTTP:
         # Setup compile directories
         #
         if self.config_dir is None:
-            self.compile_dir = utils.find_path("compiled")
+            self.compile_dir = find_path("compiled")
         else:
             self.compile_dir = os.path.join(self.config_dir, "compiled")
 
-        self.dashboard_obj = addashboard.Dashboard(
+        self.dashboard_obj = Dashboard(
             self.config_dir,
             self.logging,
             dash_compile_on_start=self.compile_on_start,
@@ -356,7 +390,6 @@ class HTTP:
         self.setup_dashboard_routes()
 
     def _process_http(self, http):
-        self._process_arg("password", http)
         self._process_arg("tokens", http)
         self._process_arg("work_factor", http)
         self._process_arg("ssl_certificate", http)
@@ -364,9 +397,7 @@ class HTTP:
 
         self._process_arg("url", http)
         if not self.url:
-            self.logger.warning(
-                "'{arg}' is '{value}'. Please configure appdaemon.yaml".format(arg="url", value=self.url)
-            )
+            self.logger.warning("'{arg}' is '{value}'. Please configure appdaemon.yaml".format(arg="url", value=self.url))
             exit(0)
 
         self._process_arg("transport", http)
@@ -374,34 +405,31 @@ class HTTP:
 
         self._process_arg("static_dirs", http)
 
-    async def start_server(self):
-        self.logger.info("Running on port %s", self.port)
-
-        self.runner = web.AppRunner(self.app)
+    async def start_server(self) -> None:
+        self.logger.debug("Starting webserver on %s:%s", self.host, self.port)
+        self.runner = web.AppRunner(self.app, access_log=self.access)
         await self.runner.setup()
-        site = web.TCPSite(self.runner, self.host, int(self.port), ssl_context=self.context)
+        self.site = web.TCPSite(self.runner, self.host, int(self.port), ssl_context=self.context)
         try:
-            await site.start()
-        except gaierror:
-            self.logger.error("Invalid host specified in URL for HTTP component")
-            self.logger.error("As of AppDaemon 4.5 the host name specificed in the URL must resolve to a known host")
-            self.logger.error("You can restore previous behavior by using `0.0.0.0` as the host portion of the URL")
-            self.logger.error("For instance: `http://0.0.0.0:5050`")
-            raise StartupAbortedException("Invalid host specified in URL for HTTP component")
+            await self.site.start()
+            self.logger.info("Running on port %s", self.port)
+        except gaierror as exc:
+            raise ade.HTTPHostError(int(self.port)) from exc
+        except Exception as exc:
+            raise ade.HTTPFailure(f"{self.host}:{self.port}") from exc
 
-    async def stop_server(self):
-        self.logger.info("Shutting down webserver")
-        #
-        # We should do this but it makes AD hang so ...
-        #
-        # await self.runner.cleanup()
+    async def stop_server(self) -> None:
+        if self.site is not None:
+            self.logger.debug("Stopping HTTP site")
+            await self.site.stop()
+        if self.runner is not None:
+            self.logger.debug("Cleaning up AppRunner")
+            await self.runner.cleanup()
+        self.logger.info("Stopped HTTP server gracefully")
 
     async def add_response_headers(self, request, response):
         for header, value in self.http["headers"].items():
             response.headers[header] = value
-
-    def stop(self):
-        self.stopping = True
 
     def _process_arg(self, arg, kwargs):
         if kwargs:
@@ -452,7 +480,7 @@ class HTTP:
         return await self._list_dash(request)
 
     async def _list_dash(self, request):
-        response = await utils.run_in_executor(self, self.dashboard_obj.get_dashboard_list)
+        response = await run_in_executor(self, self.dashboard_obj.get_dashboard_list)
         return web.Response(text=response, content_type="text/html")
 
     @secure
@@ -464,20 +492,20 @@ class HTTP:
         if recompile == "1":
             recompile = True
 
-        response = await utils.run_in_executor(self, self.dashboard_obj.get_dashboard, name, skin, recompile)
+        response = await run_in_executor(self, self.dashboard_obj.get_dashboard, name, skin, recompile)
 
         return web.Response(text=response, content_type="text/html")
 
     async def update_rss(self):
         # Grab RSS Feeds
         if self.rss_feeds is not None and self.rss_update is not None:
-            while not self.stopping:
+            while not self.AD.stopping:
                 try:
                     if self.rss_last_update is None or (self.rss_last_update + self.rss_update) <= time.time():
                         self.rss_last_update = time.time()
 
                         for feed_data in self.rss_feeds:
-                            feed = await utils.run_in_executor(self, feedparser.parse, feed_data["feed"])
+                            feed = await run_in_executor(self, feedparser.parse, feed_data["feed"])
                             if "bozo_exception" in feed:
                                 self.logger.warning(
                                     "Error in RSS feed %s: %s",
@@ -490,7 +518,7 @@ class HTTP:
                                 # RSS Feeds always live in the admin namespace
                                 await self.AD.state.set_state("rss", "admin", feed_data["target"], state=new_state)
 
-                    await asyncio.sleep(1)
+                    await self.AD.utility.sleep(1, timeout_ok=True)
                 except Exception:
                     self.logger.warning("-" * 60)
                     self.logger.warning("Unexpected error in update_rss()")
@@ -504,7 +532,7 @@ class HTTP:
 
     @securedata
     async def get_ad(self, request):
-        return web.json_response({"state": {"status": "active"}}, dumps=utils.convert_json)
+        return web.json_response({"state": {"status": "active"}}, dumps=convert_json)
 
     @securedata
     async def get_entity(self, request):
@@ -519,7 +547,7 @@ class HTTP:
 
             self.logger.debug("result = %s", state)
 
-            return web.json_response({"state": state}, dumps=utils.convert_json)
+            return web.json_response({"state": state}, dumps=convert_json)
         except Exception:
             self.logger.warning("-" * 60)
             self.logger.warning("Unexpected error in get_entity()")
@@ -543,7 +571,7 @@ class HTTP:
             if state is None:
                 return self.get_response(request, 404, "Namespace Not Found")
 
-            return web.json_response({"state": state}, dumps=utils.convert_json)
+            return web.json_response({"state": state}, dumps=convert_json)
         except Exception:
             self.logger.warning("-" * 60)
             self.logger.warning("Unexpected error in get_namespace()")
@@ -567,7 +595,7 @@ class HTTP:
             if state is None:
                 return self.get_response(request, 404, "Namespace Not Found")
 
-            return web.json_response({"state": state}, dumps=utils.convert_json)
+            return web.json_response({"state": state}, dumps=convert_json)
         except Exception:
             self.logger.warning("-" * 60)
             self.logger.warning("Unexpected error in get_namespace_entities()")
@@ -581,10 +609,10 @@ class HTTP:
     async def get_namespaces(self, request):
         try:
             self.logger.debug("get_namespaces() called)")
-            state = await self.AD.state.list_namespaces()
+            state = self.AD.state.list_namespaces()
             self.logger.debug("result = %s", state)
 
-            return web.json_response({"state": state}, dumps=utils.convert_json)
+            return web.json_response({"state": state}, dumps=convert_json)
         except Exception:
             self.logger.warning("-" * 60)
             self.logger.warning("Unexpected error in get_namespaces()")
@@ -600,7 +628,7 @@ class HTTP:
             state = self.AD.services.list_services()
             self.logger.debug("result = %s", state)
 
-            return web.json_response({"state": state}, dumps=utils.convert_json)
+            return web.json_response({"state": state}, dumps=convert_json)
         except Exception:
             self.logger.warning("-" * 60)
             self.logger.warning("Unexpected error in get_services()")
@@ -620,7 +648,7 @@ class HTTP:
 
             self.logger.debug("result = %s", state)
 
-            return web.json_response({"state": state}, dumps=utils.convert_json)
+            return web.json_response({"state": state}, dumps=convert_json)
         except Exception:
             self.logger.warning("-" * 60)
             self.logger.warning("Unexpected error in get_state()")
@@ -634,9 +662,9 @@ class HTTP:
         try:
             self.logger.debug("get_logs() called")
 
-            logs = await utils.run_in_executor(self, self.AD.logging.get_admin_logs)
+            logs = await run_in_executor(self, self.AD.logging.get_admin_logs)
 
-            return web.json_response({"logs": logs}, dumps=utils.convert_json)
+            return web.json_response({"logs": logs}, dumps=convert_json)
         except Exception:
             self.logger.warning("-" * 60)
             self.logger.warning("Unexpected error in get_logs()")
@@ -686,8 +714,13 @@ class HTTP:
 
             self.logger.debug("call_service() args = %s", args)
 
-            res = await self.AD.services.call_service(namespace, domain, service, args)
-            return web.json_response({"response": res}, status=200, dumps=utils.convert_json)
+            res = await self.AD.services.call_service(
+                namespace=namespace,
+                domain=domain,
+                service=service,
+                data=args
+            )  # fmt: skip
+            return web.json_response({"response": res}, status=200, dumps=convert_json)
 
         except Exception:
             self.logger.warning("-" * 60)
@@ -790,32 +823,21 @@ class HTTP:
         else:
             self.app.router.add_get("/", self.error_page)
 
-        #
         # For App based Web Server
-        #
         self.app.router.add_get("/app/{route}", self.app_webserver)
 
-        #
         # Add static path for apps
-        #
-        apps_static = os.path.join(self.AD.config_dir, "www")
-        exists = True
+        apps_static = self.AD.config_dir / "www"
+        try:
+            apps_static.mkdir(exist_ok=True)
+        except OSError:
+            self.logger.warning("Creation of the Web directory %s failed", apps_static)
 
-        if not os.path.isdir(apps_static):  # check if the folder exists
-            try:
-                os.mkdir(apps_static)
-            except OSError:
-                self.logger.warning("Creation of the Web directory %s failed", apps_static)
-                exists = False
-            else:
-                self.logger.debug("Successfully created the Web directory %s ", apps_static)
+        # Add router if necessary
+        if apps_static.exists():
+            self.app.router.add_static("/local", str(apps_static))
 
-        if exists:
-            self.app.router.add_static("/local", apps_static)
-        #
         # Setup user defined static paths
-        #
-
         for name, static_dir in self.static_dirs.items():
             if not os.path.isdir(static_dir):  # check if the folder exists
                 self.logger.warning("The Web directory %s doesn't exist. So static route not set up", static_dir)
@@ -856,9 +878,7 @@ class HTTP:
             del self.app_routes[name]
 
     def get_response(self, request, code, error):
-        res = "<html><head><title>{} {}</title></head><body><h1>{} {}</h1>Error in API Call</body></html>".format(
-            code, error, code, error
-        )
+        res = "<html><head><title>{} {}</title></head><body><h1>{} {}</h1>Error in API Call</body></html>".format(code, error, code, error)
         app = request.match_info.get("app", "system")
         if code == 200:
             self.access.info("API Call to %s: status: %s", app, code)
@@ -867,10 +887,7 @@ class HTTP:
         return web.Response(body=res, status=code)
 
     def get_web_response(self, request, code, error):
-        res = (
-            "<html><head><title>{} {}</title></head><body><h1>{} {}</h1>Error in Web Service"
-            " Call</body></html>".format(code, error, code, error)
-        )
+        res = "<html><head><title>{} {}</title></head><body><h1>{} {}</h1>Error in Web Service Call</body></html>".format(code, error, code, error)
         app = request.match_info.get("app", "system")
         if code == 200:
             self.access.info("Web Call to %s: status: %s", app, code)
@@ -899,12 +916,12 @@ class HTTP:
             return self.get_response(request, code, "App Not Found")
 
         elif code == 500:
-            return self.get_response(request, code, "An Error occured while processing request")
+            return self.get_response(request, code, "An Error occurred while processing request")
 
         response = "OK"
         self.access.info("API Call to %s: status: %s %s", endpoint, code, response)
 
-        return web.json_response(ret, status=code, dumps=utils.convert_json)
+        return web.json_response(ret, status=code, dumps=convert_json)
 
     # Routes, Status and Templates
 
@@ -932,7 +949,6 @@ class HTTP:
     async def dispatch_app_endpoint(self, endpoint, request):
         callback = None
         rargs = {"request": request}
-        appname = None
 
         for name in self.app_endpoints:
             if callback is not None:  # a callback has been collected
@@ -944,15 +960,11 @@ class HTTP:
                 if app_endpoint == endpoint:
                     callback = self.app_endpoints[name][handle]["callback"]
                     rargs.update(self.app_endpoints[name][handle]["kwargs"])
-                    appname = name
                     break
 
         if callback is not None:
-            app_args = self.AD.app_management.app_config[appname]
-            if "use_dictionary_unpacking" in app_args:
-                use_dictionary_unpacking = app_args["use_dictionary_unpacking"]
-            else:
-                use_dictionary_unpacking = self.AD.use_dictionary_unpacking
+            use_dictionary_unpacking = has_expanded_kwargs(callback)
+
             if request.method == "POST":
                 try:
                     args = await request.json()
@@ -968,9 +980,9 @@ class HTTP:
                     return await callback(args, rargs)
             else:
                 if use_dictionary_unpacking is True:
-                    return await utils.run_in_executor(self, callback, args, **rargs)
+                    return await run_in_executor(self, callback, args, **rargs)
                 else:
-                    return await utils.run_in_executor(self, callback, args, rargs)
+                    return await run_in_executor(self, callback, args, rargs)
         else:
             return "", 404
 
@@ -980,7 +992,7 @@ class HTTP:
     async def register_route(self, cb: Callable, route: str, name: str, **kwargs: Optional[dict]) -> str:
         if not asyncio.iscoroutinefunction(cb):  # must be async function
             self.logger.warning(
-                ("Could not Register Callback for %s, using Route %s as Web Server Route. Callback must be" " Async"),
+                ("Could not Register Callback for %s, using Route %s as Web Server Route. Callback must be Async"),
                 name,
                 route,
             )
@@ -1033,9 +1045,9 @@ class HTTP:
             self.access.debug("Web Call to %s for %s", route, name)
 
             try:
-                f = asyncio.create_task(callback(request, rargs))
-                self.AD.futures.add_future(name, f)
-                return await f
+                task = asyncio.create_task(callback(request, rargs))
+                self.AD.futures.add_future(name, task)
+                return await task
             except asyncio.CancelledError:
                 code = 504
                 error = "Request was Cancelled"
@@ -1069,11 +1081,11 @@ class HTTP:
         return web.Response(text=response, content_type="text/html")
 
     async def logon_page(self, request):
-        response = await utils.run_in_executor(self, self.generate_logon_page, request.scheme, request.host)
+        response = await run_in_executor(self, self.generate_logon_page, request.scheme, request.host)
         return web.Response(text=response, content_type="text/html")
 
     async def error_page(self, request):
-        response = await utils.run_in_executor(self, self.generate_error_page, request.scheme, request.host)
+        response = await run_in_executor(self, self.generate_error_page, request.scheme, request.host)
         return web.Response(text=response, content_type="text/html")
 
     def generate_logon_page(self, scheme, url):

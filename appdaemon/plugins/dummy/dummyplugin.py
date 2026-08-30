@@ -11,7 +11,6 @@ class DummyPlugin(PluginBase):
         super().__init__(ad, name, args)
 
         self.AD = ad
-        self.stopping = False
         self.config = args
         self.name = name
 
@@ -47,13 +46,6 @@ class DummyPlugin(PluginBase):
 
     def stop(self):
         self.logger.debug("stop() called for %s", self.name)
-        self.stopping = True
-
-    #
-    # Placeholder for constraints
-    #
-    def list_constraints(self):
-        return []
 
     #
     # Get initial state
@@ -85,18 +77,15 @@ class DummyPlugin(PluginBase):
     #
 
     async def get_updates(self):
-        await self.AD.plugins.notify_plugin_started(
-            self.name,
-            self.namespace,
-            self.get_metadata(),
-            self.get_complete_state(),
-            True,
+        await self.notify_plugin_started(
+            await self.get_metadata(),
+            await self.get_complete_state(),
         )
-        while not self.stopping:
+        while not self.AD.stopping:
             if self.current_event >= len(self.config["sequence"]["events"]) and (
                 "loop" in self.config["sequence"] and self.config["loop"] == 0 or "loop" not in self.config["sequence"]
             ):
-                while not self.stopping:
+                while not self.AD.stopping:
                     await asyncio.sleep(1)
                 return None
             else:
@@ -127,7 +116,7 @@ class DummyPlugin(PluginBase):
 
                 elif "connect" in event:
                     self.logger.debug("*** Connected ***")
-                    await self.AD.plugins.notify_plugin_started(self.namespace)
+                    await self.notify_plugin_started(self.namespace)
 
                 self.current_event += 1
                 if (
@@ -144,6 +133,3 @@ class DummyPlugin(PluginBase):
     def set_plugin_state(self, entity, state, **kwargs):
         self.logger.debug("*** Setting State: %s = %s ***", entity, state)
         self.state[entity] = state
-
-    def get_namespace(self):
-        return self.namespace

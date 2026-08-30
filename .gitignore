@@ -10,6 +10,8 @@ __pycache__/
 .Python
 env/
 build/
+docker_build/
+docs_build/
 develop-eggs/
 dist/
 downloads/
@@ -44,6 +46,7 @@ nosetests.xml
 coverage.xml
 *,cover
 .hypothesis/
+tests/conf/namespaces
 
 # Translations
 *.mo
@@ -63,6 +66,7 @@ target/
 # Python
 venv
 .venv
+*.ipynb
 
 # Mac stuff
 .DS_Store
@@ -76,10 +80,13 @@ venv
 
 # IDE
 
-.vscode
+#.vscode
 
 # Docs
 
 .docs_build
+
+# Nix devenv
+.devenv
 
 .devcontainer

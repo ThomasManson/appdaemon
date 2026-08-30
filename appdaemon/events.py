@@ -1,14 +1,22 @@
 import datetime
+import json
 import traceback
 import uuid
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from logging import Logger
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any, Protocol
 
-import appdaemon.utils as utils
+from .plugin_management import PluginBase
+from .utils import parse
+from .utils.functools import _sanitize_kwargs
 
 if TYPE_CHECKING:
-    from appdaemon.appdaemon import AppDaemon
+    from .appdaemon import AppDaemon
+
+
+class EventCallback(Protocol):
+    def __call__(self, event_type: str, data: dict[str, Any], **kwargs: Any) -> None: ...
 
 
 class Events:
@@ -25,87 +33,101 @@ class Events:
         self.AD = ad
         self.logger = ad.logging.get_child("_events")
 
-    async def add_event_callback(self, name, namespace, cb, event, **kwargs):
-        """Adds a callback for an event which is called internally by apps.
+    async def add_event_callback(
+        self,
+        name: str,
+        namespace: str,
+        cb: Callable,
+        event: str | Iterable[str] | None = None,
+        timeout: str | int | float | datetime.timedelta | None = None,
+        oneshot: bool = False,
+        pin: bool | None = None,
+        pin_thread: int | None = None,
+        kwargs: dict[str, Any] | None = None, # Intentionally not expanding the kwargs here so that there are no name clashes
+    ) -> str | list[str] | None:
+        """Add an event callback to AppDaemon's internal dicts.
+
+        Uses the internal callback lock to ensure that the callback is added in a thread-safe manner, and adds an entity
+        in the admin namespace to track the callback.
+
+        Includes a feature to automatically cancel the callback after a timeout, if specified.
 
         Args:
-            name (str): Name of the app.
-            namespace  (str): Namespace of the event.
-            cb: Callback function.
-            event (str): Name of the event.
-            **kwargs: List of values to filter on, and additional arguments to pass to the callback.
+            name (str): Name of the app registering the callback. This is important because all callbacks have to be
+                associated with an app.
+            namespace (str): Namespace to listen for the event in. All events are fired in a namespace, and this will
+                only listen for events in that namespace.
+            cb (Callable): Callback function.
+            event (str | Iterable[str]): Name of the event.
+            timeout (int, optional):
+            oneshot (bool, optional): If ``True``, the callback will be removed after it is executed once. Defaults to
+                ``False``.
+            kwargs: List of values to filter on, and additional arguments to pass to the callback.
 
         Returns:
             ``None`` or the reference to the callback handle.
-
         """
+        # Create the default kwargs dict
+        kwargs = {} if kwargs is None else kwargs
 
-        if self.AD.threading.validate_pin(name, kwargs) is True:
-            if "pin" in kwargs:
-                pin_app = kwargs["pin_app"]
-            else:
-                pin_app = self.AD.app_management.objects[name]["pin_app"]
+        if oneshot: # this is still a little awkward, but it works until this can be refactored
+            # This needs to be in the kwargs dict here that gets passed around later, so that the dispatcher knows to
+            # cancel the callback after the first run.
+            kwargs["oneshot"] = oneshot
 
-            if "pin_thread" in kwargs:
-                pin_thread = kwargs["pin_thread"]
-                pin_app = True
-            else:
-                pin_thread = self.AD.app_management.objects[name]["pin_thread"]
+        pin, pin_thread = self.AD.threading.determine_thread(name, pin, pin_thread)
 
-            async with self.AD.callbacks.callbacks_lock:
-                if name not in self.AD.callbacks.callbacks:
-                    self.AD.callbacks.callbacks[name] = {}
-                handle = uuid.uuid4().hex
-                self.AD.callbacks.callbacks[name][handle] = {
-                    "name": name,
-                    "id": self.AD.app_management.objects[name]["id"],
-                    "type": "event",
-                    "function": cb,
-                    "namespace": namespace,
-                    "event": event,
-                    "pin_app": pin_app,
-                    "pin_thread": pin_thread,
-                    "kwargs": kwargs,
-                }
+        async with self.AD.callbacks.callbacks_lock:
+            if name not in self.AD.callbacks.callbacks:
+                self.AD.callbacks.callbacks[name] = {}
+            handle = uuid.uuid4().hex
+            self.AD.callbacks.callbacks[name][handle] = {
+                "name": name,
+                "id": self.AD.app_management.objects[name].id,
+                "type": "event",
+                "function": cb,
+                "namespace": namespace,
+                "event": event,
+                "pin_app": pin,
+                "pin_thread": pin_thread,
+                "kwargs": kwargs,
+            }
 
-            if "timeout" in kwargs:
-                timeout = kwargs.pop("timeout")
-                exec_time = await self.AD.sched.get_now() + datetime.timedelta(seconds=int(timeout))
-
-                kwargs["__timeout"] = await self.AD.sched.insert_schedule(
-                    name,
-                    exec_time,
-                    None,
-                    False,
-                    None,
-                    __event_handle=handle,
-                )
-
-            await self.AD.state.add_entity(
-                "admin",
-                "event_callback.{}".format(handle),
-                "active",
-                {
-                    "app": name,
-                    "event_name": event,
-                    "function": cb.__name__,
-                    "pinned": pin_app,
-                    "pinned_thread": pin_thread,
-                    "fired": 0,
-                    "executed": 0,
-                    "kwargs": kwargs,
-                },
+        # Automatically cancel the callback after a timeout
+        if timeout is not None:
+            exec_time = await self.AD.sched.get_now() + parse.parse_timedelta(timeout)
+            kwargs["__timeout"] = await self.AD.sched.insert_schedule(
+                name=name,
+                aware_dt=exec_time,
+                callback=None,
+                repeat=False,
+                type_=None,
+                __event_handle=handle,
             )
-            return handle
-        else:
-            return None
 
-    async def cancel_event_callback(self, name, handle):
+        await self.AD.state.add_entity(
+            namespace="admin",
+            entity=f"event_callback.{handle}",
+            state="active",
+            attributes={
+                "app": name,
+                "event_name": event,
+                "function": cb.__name__,
+                "pinned": pin,
+                "pinned_thread": pin_thread,
+                "fired": 0,
+                "executed": 0,
+                "kwargs": kwargs,
+            },
+        )
+        return handle
+
+    async def cancel_event_callback(self, name: str, handle: str, *, silent: bool = False):
         """Cancels an event callback.
 
         Args:
-            name (str): Name of the app or module.
-            handle: Previously supplied callback handle for the callback.
+            name (str): Name of the app that registered the callback.
+            handle (str): Handle produced by ``listen_event()`` when creating the callback.
 
         Returns:
             None.
@@ -117,15 +139,15 @@ class Events:
         async with self.AD.callbacks.callbacks_lock:
             if name in self.AD.callbacks.callbacks and handle in self.AD.callbacks.callbacks[name]:
                 del self.AD.callbacks.callbacks[name][handle]
-                await self.AD.state.remove_entity("admin", "event_callback.{}".format(handle))
+                await self.AD.state.remove_entity("admin", f"event_callback.{handle}")
                 executed = True
 
             if name in self.AD.callbacks.callbacks and self.AD.callbacks.callbacks[name] == {}:
                 del self.AD.callbacks.callbacks[name]
 
-        if not executed:
+        if not executed and not silent:
             self.logger.warning(
-                "Invalid callback handle '{}' in cancel_event_callback() from app {}".format(handle, name)
+                f"Invalid callback handle '{handle}' in cancel_event_callback() from app {name}"
             )
 
         return executed
@@ -150,9 +172,9 @@ class Events:
                 callback = self.AD.callbacks.callbacks[name][handle]
                 return callback["event"], callback["kwargs"].copy()
             else:
-                raise ValueError("Invalid handle: {}".format(handle))
+                raise ValueError(f"Invalid handle: {handle}")
 
-    async def fire_event(self, namespace: str, event: str, **kwargs):
+    async def fire_event(self, namespace: str, event: str, **kwargs: Any) -> dict[str, Any] | None:
         """Fires an event.
 
         If the namespace does not have a plugin associated with it, the event will be fired locally.
@@ -171,16 +193,20 @@ class Events:
         """
 
         self.logger.debug("fire_plugin_event() %s %s %s", namespace, event, kwargs)
-        plugin = await self.AD.plugins.get_plugin_object(namespace)
+        match self.AD.plugins.get_plugin_object(namespace):
+            case PluginBase() as plugin if hasattr(plugin, "fire_plugin_event"):
+                # In the case that the namespace has a PluginBase associated (both Hass and MQTT plugins do), we check
+                # that the plugin actually has a method called `fire_plugin_event`. If both of these conditions are met,
+                # we call that method to fire the event, and assume that the plugin when the plugin fires the event, it
+                # will make it back to AppDaemon via the normal plugin event processing mechanism.
+                return await plugin.fire_plugin_event(event, namespace, **kwargs)
+            case _:
+                # If anything else comes out of get_plugin_object, we assume that the namespace does not have a plugin
+                # associated with it, and we can fire the event locally.
+                # This is the case for the admin namespace, and any other namespaces that do not have a plugin.
+                return await self.AD.events.process_event(namespace, {"event_type": event, "data": kwargs})
 
-        if hasattr(plugin, "fire_plugin_event"):
-            # We assume that the event will come back to us via the plugin
-            await plugin.fire_plugin_event(event, namespace, **kwargs)
-        else:
-            # Just fire the event locally
-            await self.AD.events.process_event(namespace, {"event_type": event, "data": kwargs})
-
-    async def process_event(self, namespace: str, data: Dict[str, Any]):
+    async def process_event(self, namespace: str, data: dict[str, Any]):
         """Processes an event that has been received either locally or from a plugin.
 
         Args:
@@ -196,8 +222,8 @@ class Events:
             # if data["event_type"] == "__AD_ENTITY_REMOVED":
             #    print("process event")
 
-            self.logger.debug("Event type:%s:", data["event_type"])
-            self.logger.debug(data["data"])
+            self.logger.debug("Event type: %s:", data["event_type"])
+            # self.logger.debug(data["data"])
 
             # Kick the scheduler so it updates it's clock
             if self.AD.sched is not None and self.AD.sched.realtime is False and namespace != "admin":
@@ -215,7 +241,7 @@ class Events:
 
                     self.AD.state.set_state_simple(namespace, entity_id, data["data"]["new_state"])
 
-                    if self.AD.apps is True and namespace != "admin":
+                    if self.AD.apps_enabled and namespace != "admin":
                         await self.AD.state.process_state_callbacks(namespace, data)
                 else:
                     self.logger.warning("Malformed 'state_changed' event: %s", data["data"])
@@ -229,7 +255,7 @@ class Events:
 
                 await self.AD.logging.process_log_callbacks(namespace, data)
 
-            if self.AD.apps is True:  # and namespace != "admin":
+            if self.AD.apps_enabled:  # and namespace != "admin":
                 # Process callbacks
                 await self.process_event_callbacks(namespace, data)
 
@@ -238,6 +264,15 @@ class Events:
             #
 
             if self.AD.http is not None:
+                # Short-circuit when nobody is subscribed to /stream. The
+                # deepcopy below exists only to feed stream_update, and
+                # ADStream.process_event is itself a no-op when handlers
+                # is empty. When no clients are connected this branch was
+                # the dominant CPU cost in our deployment.
+                stream = getattr(self.AD.http, "stream", None)
+                if stream is not None and not stream.handlers:
+                    return
+
                 if data["event_type"] == "state_changed":
                     if data["data"]["new_state"] == data["data"]["old_state"]:
                         # Nothing changed so don't send
@@ -258,6 +293,7 @@ class Events:
             self.logger.warning("Unexpected error during process_event()")
             self.logger.warning("-" * 60)
             self.logger.warning(traceback.format_exc())
+            self.logger.warning(json.dumps(data, indent=4))
             self.logger.warning("-" * 60)
 
     async def has_log_callback(self, name: str):
@@ -286,7 +322,7 @@ class Events:
 
         return has_log_callback
 
-    async def process_event_callbacks(self, namespace, data):
+    async def process_event_callbacks(self, namespace: str, data: dict[str, Any]) -> None:
         """Processes a pure event callback.
 
         Locate any callbacks that may be registered for this event, check for filters and if appropriate,
@@ -346,7 +382,7 @@ class Events:
                                         {
                                             "id": uuid_,
                                             "name": name,
-                                            "objectid": self.AD.app_management.objects[name]["id"],
+                                            "objectid": self.AD.app_management.objects[name].id,
                                             "type": "event",
                                             "event": data["event_type"],
                                             "function": callback["function"],
@@ -383,4 +419,4 @@ class Events:
     @staticmethod
     def sanitize_event_kwargs(app, kwargs):
         kwargs_copy = kwargs.copy()
-        return utils._sanitize_kwargs(kwargs_copy, ["__silent"])
+        return _sanitize_kwargs(kwargs_copy, ["__silent", "pin_app"])

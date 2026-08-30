@@ -40,7 +40,7 @@ AppDaemon is developed and maintained by a small team of hard working folks:
 
 - `Andrew Cockburn <https://github.com/acockburn>`__ - AppDaemon founder, Chief Architect and Benevolent Dictator For Life.
 - `Odianosen Ejale <https://github.com/Odianosen25>`__ - Core & MQTT Development and maintenance, fixer and tester.
-- `John Lancaster <https://github.com/jsl12>`__ - New 'hire' that shows promse!
+- `John Lancaster <https://github.com/jsl12>`__ - New 'hire' that shows promise!
 
 Contributors
 ^^^^^^^^^^^^
@@ -63,6 +63,7 @@ Contents:
    INSTALL
    CONFIGURE
    DOCKER_TUTORIAL
+   ADDON
    HASS_TUTORIAL
    APPGUIDE
    COMMUNITY_TUTORIALS
@@ -73,7 +74,8 @@ Contents:
    DASHBOARD_CREATION
    WIDGETDEV
    DEV
-   INTERNALS
+   internals/index
+   TESTING
    REST_STREAM_API
    UPGRADE_FROM_3.x
    UPGRADE_FROM_2.x
