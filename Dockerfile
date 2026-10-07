@@ -85,6 +85,9 @@ RUN apk --no-cache add libx11 imlib2
 COPY --from=ssocr_build /usr/local/bin/ssocr /usr/bin/ssocr
 RUN chmod 755 /usr/bin/ssocr
 
+# numpy and Pillow for pre-processing meter images before ssocr (found via PYTHONPATH below)
+RUN apk --no-cache add py3-numpy py3-pillow
+
 # Copy sample configuration directory and entrypoint script
 COPY ./conf /opt/conf
 COPY ./scripts/start.sh /start.sh
